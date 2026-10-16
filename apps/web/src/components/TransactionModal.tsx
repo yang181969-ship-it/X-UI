@@ -1,0 +1,341 @@
+import { DeleteOutlined } from '@ant-design/icons';
+import { useQueryClient } from '@tanstack/react-query';
+import { Alert, App, Button, Checkbox, DatePicker, Form, Input, Modal, Popconfirm, Segmented, Select, Space, Typography } from 'antd';
+import dayjs, { type Dayjs } from 'dayjs';
+import { useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router';
+import { fromMinor, HIDDEN_TAG, type AccountDto, type TagDto, type TransactionDto, type TransactionType } from '@z-ui/shared';
+import { del, post, put } from '../api/client.ts';
+import { errorText, invalidateLedger } from '../api/hooks.ts';
+import { cardLabel, useAccountOptions, useDecimals, useLookups } from '../lib/format.ts';
+import { CustomFieldInputs } from './CustomFields.tsx';
+import { MoneyInput } from './Money.tsx';
+
+interface Values {
+  type: TransactionType;
+  accountId?: string;
+  currency?: string;
+  cardId?: string | null;
+  fromAccountId?: string;
+  fromCurrency?: string;
+  toAccountId?: string;
+  toCurrency?: string;
+  amount?: number | null;
+  toAmount?: number | null;
+  categoryId?: string | null;
+  counterparty?: string;
+  note?: string;
+  occurredAt: Dayjs;
+  tagIds?: string[];
+  extra?: Record<string, unknown>;
+}
+
+export interface TxDefaults {
+  type?: TransactionType;
+  accountId?: string;
+  cardId?: string;
+}
+
+function initialValues(tx: TransactionDto | null | undefined, d: TxDefaults): Partial<Values> {
+  if (!tx) return { type: d.type ?? 'expense', accountId: d.accountId, cardId: d.cardId, occurredAt: dayjs(), tagIds: [], extra: {} };
+  const common = { occurredAt: dayjs(tx.occurredAt), note: tx.note ?? undefined, counterparty: tx.counterparty ?? undefined, tagIds: tx.tagIds, extra: tx.extra, categoryId: tx.categoryId };
+  if (tx.type === 'transfer') {
+    const out = tx.amount < 0;
+    const other = { accountId: tx.counterpartAccountId ?? undefined, currency: tx.counterpartCurrency ?? undefined, amount: tx.counterpartAmount ?? 0 };
+    return {
+      ...common,
+      type: 'transfer',
+      fromAccountId: out ? tx.accountId : other.accountId,
+      fromCurrency: out ? tx.currency : other.currency,
+      toAccountId: out ? other.accountId : tx.accountId,
+      toCurrency: out ? other.currency : tx.currency,
+      amount: out ? -tx.amount : -other.amount,
+      toAmount: out ? other.amount : tx.amount,
+    };
+  }
+  return { ...common, type: tx.type, accountId: tx.accountId, currency: tx.currency, cardId: tx.cardId, amount: tx.type === 'adjustment' ? tx.amount : Math.abs(tx.amount) };
+}
+
+/** Currency picker shown only for multi-currency accounts. */
+function CurrencyPick({ account, value, onChange }: { account?: AccountDto; value?: string; onChange?: (v: string) => void }) {
+  if (!account || account.currencies.length < 2) return null;
+  return (
+    <Select
+      style={{ width: 96, flex: '0 0 auto' }}
+      value={value ?? account.currency}
+      onChange={onChange}
+      options={account.currencies.map((c) => ({ value: c.currency, label: c.currency }))}
+    />
+  );
+}
+
+export function TransactionModal({
+  open,
+  onClose,
+  editing,
+  defaults = {},
+}: {
+  open: boolean;
+  onClose: () => void;
+  editing?: TransactionDto | null;
+  defaults?: TxDefaults;
+}) {
+  const { t } = useTranslation();
+  const { message } = App.useApp();
+  const qc = useQueryClient();
+  const [form] = Form.useForm<Values>();
+  const [busy, setBusy] = useState(false);
+  const L = useLookups();
+  const navigate = useNavigate();
+  const decimals = useDecimals();
+  const accountOptions = useAccountOptions();
+
+  const type = Form.useWatch('type', form) ?? 'expense';
+  const accountId = Form.useWatch('accountId', form);
+  const fromId = Form.useWatch('fromAccountId', form);
+  const toId = Form.useWatch('toAccountId', form);
+  const amount = Form.useWatch('amount', form);
+  const toAmount = Form.useWatch('toAmount', form);
+  const currencyField = Form.useWatch('currency', form);
+  const fromCurField = Form.useWatch('fromCurrency', form);
+  const toCurField = Form.useWatch('toCurrency', form);
+
+  useEffect(() => {
+    if (open) {
+      form.resetFields();
+      form.setFieldsValue(initialValues(editing, defaults) as Values);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, editing]);
+
+  const account = accountId ? L.acc.get(accountId) : undefined;
+  const from = fromId ? L.acc.get(fromId) : undefined;
+  const to = toId ? L.acc.get(toId) : undefined;
+  const currency = currencyField ?? account?.currency;
+  const fromCurrency = fromCurField ?? from?.currency;
+  const toCurrency = toCurField ?? to?.currency;
+  const crossCurrency = !!fromCurrency && !!toCurrency && fromCurrency !== toCurrency;
+
+  const cardOptions = useMemo(
+    () => L.cards.filter((c) => c.accountId === accountId && !c.archived && c.status !== 'closed').map((c) => ({ value: c.id, label: cardLabel(c) })),
+    [L.cards, accountId],
+  );
+  const categoryOptions = useMemo(
+    () => L.categories.filter((c) => !c.archived && c.kind === (type === 'income' ? 'income' : 'expense')).map((c) => ({ value: c.id, label: c.name })),
+    [L.categories, type],
+  );
+  const tagOptions = useMemo(() => L.tags.map((tg) => ({ value: tg.id, label: tg.name })), [L.tags]);
+  const hiddenTag = L.tags.find((tg) => tg.name.toLowerCase() === HIDDEN_TAG);
+
+  const rate =
+    crossCurrency && amount && toAmount
+      ? (Number(fromMinor(toAmount, decimals(toCurrency!))) / Number(fromMinor(amount, decimals(fromCurrency!)))).toFixed(4)
+      : null;
+
+  const submit = async (v: Values) => {
+    setBusy(true);
+    try {
+      // Tags typed in the select that don't exist yet are created first.
+      const known = new Set(L.tags.map((x) => x.id));
+      const tagIds: string[] = [];
+      for (const id of v.tagIds ?? []) {
+        if (known.has(id)) tagIds.push(id);
+        else tagIds.push((await post<TagDto>('/tags', { name: id })).id);
+      }
+      const base = { occurredAt: v.occurredAt.format('YYYY-MM-DD'), note: v.note || null, counterparty: v.counterparty || null, tagIds, extra: v.extra ?? {} };
+      const body =
+        v.type === 'transfer'
+          ? { ...base, type: 'transfer', fromAccountId: v.fromAccountId, fromCurrency, toAccountId: v.toAccountId, toCurrency, amount: v.amount, toAmount: crossCurrency ? v.toAmount : null }
+          : v.type === 'adjustment'
+            ? { ...base, type: 'adjustment', accountId: v.accountId, currency, amount: v.amount }
+            : { ...base, type: v.type, accountId: v.accountId, currency, cardId: v.cardId || null, categoryId: v.categoryId || null, amount: v.amount };
+      if (editing) await put(`/transactions/${editing.id}`, body);
+      else await post('/transactions', body);
+      await invalidateLedger(qc);
+      void message.success(t('common.saved'));
+      onClose();
+    } catch (e) {
+      void message.error(errorText(e, t));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    if (!editing) return;
+    try {
+      await del(`/transactions/${editing.id}`);
+      await invalidateLedger(qc);
+      void message.success(t('common.deleted'));
+      onClose();
+    } catch (e) {
+      void message.error(errorText(e, t));
+    }
+  };
+
+  // Cash legs of stock trades belong to the trade; they are edited on the investments page.
+  if (editing?.type === 'trade') {
+    return (
+      <Modal
+        open={open}
+        onCancel={onClose}
+        title={t('tx.types.trade')}
+        destroyOnHidden
+        footer={
+          <Space>
+            <Button onClick={onClose}>{t('common.close')}</Button>
+            <Button type="primary" onClick={() => (onClose(), navigate('/invest'))}>
+              {t('nav.invest')}
+            </Button>
+          </Space>
+        }
+      >
+        <Alert type="info" showIcon message={t('invest.tradeTx')} />
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal
+      open={open}
+      onCancel={onClose}
+      title={editing ? t('tx.edit') : t('tx.add')}
+      destroyOnHidden
+      width={520}
+      footer={
+        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+          <span>
+            {editing && (
+              <Popconfirm title={t('common.deleteConfirm')} description={editing.transferGroupId ? t('tx.deleteTransfer') : undefined} onConfirm={remove}>
+                <Button danger icon={<DeleteOutlined />}>
+                  {t('common.delete')}
+                </Button>
+              </Popconfirm>
+            )}
+          </span>
+          <span style={{ display: 'flex', gap: 8 }}>
+            <Button onClick={onClose}>{t('common.cancel')}</Button>
+            <Button type="primary" loading={busy} onClick={() => form.submit()}>
+              {t('common.save')}
+            </Button>
+          </span>
+        </div>
+      }
+    >
+      <Form form={form} layout="vertical" requiredMark={false} onFinish={submit} style={{ marginTop: 12 }}>
+        <Form.Item name="type" style={{ marginBottom: 16 }}>
+          <Segmented block options={(['expense', 'income', 'transfer', 'adjustment'] as const).map((k) => ({ value: k, label: t(`tx.types.${k}`) }))} />
+        </Form.Item>
+
+        {type === 'transfer' ? (
+          <>
+            <Form.Item label={t('tx.from')} required htmlFor="fromAccountId">
+              <Space.Compact block>
+                <Form.Item name="fromAccountId" noStyle rules={[{ required: true }]}>
+                  <Select options={accountOptions} showSearch={{ optionFilterProp: 'label' }} onChange={() => form.setFieldValue('fromCurrency', undefined)} />
+                </Form.Item>
+                <Form.Item name="fromCurrency" noStyle>
+                  <CurrencyPick account={from} />
+                </Form.Item>
+              </Space.Compact>
+            </Form.Item>
+            <Form.Item label={t('tx.to')} required htmlFor="toAccountId">
+              <Space.Compact block>
+                <Form.Item
+                  name="toAccountId"
+                  noStyle
+                  dependencies={['fromAccountId', 'fromCurrency', 'toCurrency']}
+                  rules={[
+                    { required: true },
+                    // The same account is fine when exchanging between two of its currencies.
+                    { validator: (_, v) => (v && v === fromId && fromCurrency === toCurrency ? Promise.reject(new Error('≠')) : Promise.resolve()) },
+                  ]}
+                >
+                  <Select options={accountOptions} showSearch={{ optionFilterProp: 'label' }} onChange={() => form.setFieldValue('toCurrency', undefined)} />
+                </Form.Item>
+                <Form.Item name="toCurrency" noStyle>
+                  <CurrencyPick account={to} />
+                </Form.Item>
+              </Space.Compact>
+            </Form.Item>
+            <Form.Item name="amount" label={t('common.amount')} rules={[{ required: true }]}>
+              <MoneyInput currency={fromCurrency ?? '—'} autoFocus />
+            </Form.Item>
+            {crossCurrency && (
+              <Form.Item name="toAmount" label={t('tx.toAmount')} rules={[{ required: true }]} extra={rate ? t('tx.rate', { from: fromCurrency, rate, to: toCurrency }) : undefined}>
+                <MoneyInput currency={toCurrency!} />
+              </Form.Item>
+            )}
+          </>
+        ) : (
+          <>
+            <Form.Item name="accountId" label={t('tx.account')} rules={[{ required: true }]}>
+              <Select
+                options={accountOptions}
+                showSearch={{ optionFilterProp: 'label' }}
+                onChange={() => {
+                  form.setFieldValue('cardId', null);
+                  form.setFieldValue('currency', undefined);
+                }}
+              />
+            </Form.Item>
+            <Form.Item label={t('common.amount')} required htmlFor="amount" extra={type === 'adjustment' ? t('tx.adjustmentHint') : undefined}>
+              <Space.Compact block>
+                <Form.Item name="currency" noStyle>
+                  <CurrencyPick account={account} />
+                </Form.Item>
+                <Form.Item name="amount" noStyle rules={[{ required: true }]}>
+                  <MoneyInput currency={currency ?? '—'} allowNegative={type === 'adjustment'} autoFocus />
+                </Form.Item>
+              </Space.Compact>
+            </Form.Item>
+            {type !== 'adjustment' && (
+              <>
+                {cardOptions.length > 0 && (
+                  <Form.Item name="cardId" label={t('tx.card')}>
+                    <Select allowClear options={cardOptions} placeholder={t('common.optional')} />
+                  </Form.Item>
+                )}
+                <Form.Item name="categoryId" label={t('tx.category')}>
+                  <Select allowClear options={categoryOptions} showSearch={{ optionFilterProp: 'label' }} placeholder={t('common.optional')} />
+                </Form.Item>
+                <Form.Item name="counterparty" label={t('tx.counterparty')}>
+                  <Input maxLength={128} />
+                </Form.Item>
+              </>
+            )}
+          </>
+        )}
+
+        <Form.Item name="occurredAt" label={t('common.date')} rules={[{ required: true }]}>
+          <DatePicker style={{ width: '100%' }} allowClear={false} />
+        </Form.Item>
+        <Form.Item name="tagIds" label={t('tx.tags')} extra={<Typography.Text type="secondary" style={{ fontSize: 12 }}>{t('tx.tagsHint')}</Typography.Text>}>
+          <Select mode="tags" options={tagOptions} showSearch={{ optionFilterProp: 'label' }} tokenSeparators={[',', '，']} />
+        </Form.Item>
+        {/* Shortcut for the "hidden" tag: small spending left out of the list, still in the stats. */}
+        <Form.Item noStyle shouldUpdate={(a, b) => a.tagIds !== b.tagIds}>
+          {() => {
+            const ids: string[] = form.getFieldValue('tagIds') ?? [];
+            const isHidden = (x: string) => x === hiddenTag?.id || x.toLowerCase() === HIDDEN_TAG;
+            return (
+              <Form.Item style={{ marginTop: -8 }}>
+                <Checkbox
+                  checked={ids.some(isHidden)}
+                  onChange={(e) => form.setFieldValue('tagIds', e.target.checked ? [...ids, hiddenTag?.id ?? HIDDEN_TAG] : ids.filter((x) => !isHidden(x)))}
+                >
+                  {t('tx.markHidden')}
+                </Checkbox>
+              </Form.Item>
+            );
+          }}
+        </Form.Item>
+        <Form.Item name="note" label={t('common.note')}>
+          <Input.TextArea autoSize={{ minRows: 1, maxRows: 4 }} maxLength={2000} />
+        </Form.Item>
+        <CustomFieldInputs entity="transaction" />
+      </Form>
+    </Modal>
+  );
+}

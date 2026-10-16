@@ -1,0 +1,381 @@
+{
+  "version": 1,
+  "app": {
+    "name": "Z-UI",
+    "defaultLocale": "zh-CN",
+    "defaultCurrency": "USD",
+    "defaultCountry": "US"
+  },
+  "currencies": [
+    {
+      "code": "USD",
+      "name": "美元",
+      "symbol": "$",
+      "decimals": 2
+    },
+    {
+      "code": "CNY",
+      "name": "人民币",
+      "symbol": "¥",
+      "decimals": 2
+    },
+    {
+      "code": "HKD",
+      "name": "港币",
+      "symbol": "HK$",
+      "decimals": 2
+    },
+    {
+      "code": "EUR",
+      "name": "欧元",
+      "symbol": "€",
+      "decimals": 2
+    },
+    {
+      "code": "GBP",
+      "name": "英镑",
+      "symbol": "£",
+      "decimals": 2
+    },
+    {
+      "code": "JPY",
+      "name": "日元",
+      "symbol": "¥",
+      "decimals": 0
+    },
+    {
+      "code": "SGD",
+      "name": "新加坡元",
+      "symbol": "S$",
+      "decimals": 2
+    },
+    {
+      "code": "AUD",
+      "name": "澳元",
+      "symbol": "A$",
+      "decimals": 2
+    },
+    {
+      "code": "CAD",
+      "name": "加元",
+      "symbol": "C$",
+      "decimals": 2
+    },
+    {
+      "code": "CHF",
+      "name": "瑞士法郎",
+      "symbol": "CHF",
+      "decimals": 2
+    },
+    {
+      "code": "TWD",
+      "name": "新台币",
+      "symbol": "NT$",
+      "decimals": 2
+    },
+    {
+      "code": "MOP",
+      "name": "澳门元",
+      "symbol": "MOP$",
+      "decimals": 2
+    },
+    {
+      "code": "KRW",
+      "name": "韩元",
+      "symbol": "₩",
+      "decimals": 0
+    },
+    {
+      "code": "MYR",
+      "name": "马来西亚林吉特",
+      "symbol": "RM",
+      "decimals": 2
+    },
+    {
+      "code": "THB",
+      "name": "泰铢",
+      "symbol": "฿",
+      "decimals": 2
+    },
+    {
+      "code": "NZD",
+      "name": "新西兰元",
+      "symbol": "NZ$",
+      "decimals": 2
+    }
+  ],
+  "countries": [
+    {
+      "code": "US",
+      "name": "美国",
+      "flag": "🇺🇸"
+    },
+    {
+      "code": "CN",
+      "name": "中国大陆",
+      "flag": "🇨🇳"
+    },
+    {
+      "code": "HK",
+      "name": "中国香港",
+      "flag": "🇭🇰"
+    },
+    {
+      "code": "MO",
+      "name": "中国澳门",
+      "flag": "🇲🇴"
+    },
+    {
+      "code": "TW",
+      "name": "中国台湾",
+      "flag": "🇹🇼"
+    },
+    {
+      "code": "GB",
+      "name": "英国",
+      "flag": "🇬🇧"
+    },
+    {
+      "code": "SG",
+      "name": "新加坡",
+      "flag": "🇸🇬"
+    },
+    {
+      "code": "JP",
+      "name": "日本",
+      "flag": "🇯🇵"
+    },
+    {
+      "code": "KR",
+      "name": "韩国",
+      "flag": "🇰🇷"
+    },
+    {
+      "code": "AU",
+      "name": "澳大利亚",
+      "flag": "🇦🇺"
+    },
+    {
+      "code": "CA",
+      "name": "加拿大",
+      "flag": "🇨🇦"
+    },
+    {
+      "code": "DE",
+      "name": "德国",
+      "flag": "🇩🇪"
+    },
+    {
+      "code": "FR",
+      "name": "法国",
+      "flag": "🇫🇷"
+    },
+    {
+      "code": "CH",
+      "name": "瑞士",
+      "flag": "🇨🇭"
+    },
+    {
+      "code": "MY",
+      "name": "马来西亚",
+      "flag": "🇲🇾"
+    },
+    {
+      "code": "TH",
+      "name": "泰国",
+      "flag": "🇹🇭"
+    },
+    {
+      "code": "NZ",
+      "name": "新西兰",
+      "flag": "🇳🇿"
+    },
+    {
+      "code": "ZZ",
+      "name": "全球 / 不限国家",
+      "flag": "🌐"
+    }
+  ],
+  "defaultCategories": {
+    "expense": [
+      {
+        "name": "AI 服务",
+        "icon": "robot",
+        "color": "#722ed1"
+      },
+      {
+        "name": "流媒体",
+        "icon": "play-square",
+        "color": "#eb2f96"
+      },
+      {
+        "name": "开发工具",
+        "icon": "code",
+        "color": "#2f54eb"
+      },
+      {
+        "name": "云服务器 / 托管",
+        "icon": "cloud-server",
+        "color": "#1677ff"
+      },
+      {
+        "name": "域名 / DNS",
+        "icon": "global",
+        "color": "#13c2c2"
+      },
+      {
+        "name": "邮件转寄",
+        "icon": "mail",
+        "color": "#08979c"
+      },
+      {
+        "name": "软件订阅",
+        "icon": "appstore",
+        "color": "#597ef7"
+      },
+      {
+        "name": "网络 / VPN",
+        "icon": "wifi",
+        "color": "#36cfc9"
+      },
+      {
+        "name": "手机话费",
+        "icon": "mobile",
+        "color": "#40a9ff"
+      },
+      {
+        "name": "游戏",
+        "icon": "trophy",
+        "color": "#9254de"
+      },
+      {
+        "name": "餐饮",
+        "icon": "coffee",
+        "color": "#fa8c16"
+      },
+      {
+        "name": "外卖",
+        "icon": "shopping",
+        "color": "#fa541c"
+      },
+      {
+        "name": "超市日用",
+        "icon": "shop",
+        "color": "#faad14"
+      },
+      {
+        "name": "网购",
+        "icon": "shopping-cart",
+        "color": "#f759ab"
+      },
+      {
+        "name": "交通出行",
+        "icon": "car",
+        "color": "#1890ff"
+      },
+      {
+        "name": "机票酒店",
+        "icon": "rocket",
+        "color": "#13a8a8"
+      },
+      {
+        "name": "房租房贷",
+        "icon": "home",
+        "color": "#531dab"
+      },
+      {
+        "name": "水电燃气",
+        "icon": "thunderbolt",
+        "color": "#d4b106"
+      },
+      {
+        "name": "医疗健康",
+        "icon": "medicine-box",
+        "color": "#f5222d"
+      },
+      {
+        "name": "保险",
+        "icon": "safety",
+        "color": "#391085"
+      },
+      {
+        "name": "教育学习",
+        "icon": "read",
+        "color": "#52c41a"
+      },
+      {
+        "name": "转运 / 快递",
+        "icon": "inbox",
+        "color": "#a0d911"
+      },
+      {
+        "name": "税费",
+        "icon": "audit",
+        "color": "#8c8c8c"
+      },
+      {
+        "name": "银行手续费",
+        "icon": "bank",
+        "color": "#7cb305"
+      },
+      {
+        "name": "汇损",
+        "icon": "swap",
+        "color": "#cf1322"
+      },
+      {
+        "name": "其他支出",
+        "icon": "ellipsis",
+        "color": "#595959"
+      }
+    ],
+    "income": [
+      {
+        "name": "工资",
+        "icon": "wallet",
+        "color": "#52c41a"
+      },
+      {
+        "name": "奖金",
+        "icon": "gift",
+        "color": "#faad14"
+      },
+      {
+        "name": "利息",
+        "icon": "bank",
+        "color": "#13c2c2"
+      },
+      {
+        "name": "投资收益",
+        "icon": "rise",
+        "color": "#1677ff"
+      },
+      {
+        "name": "返现 / 奖励",
+        "icon": "dollar",
+        "color": "#73d13d"
+      },
+      {
+        "name": "退款",
+        "icon": "rollback",
+        "color": "#eb2f96"
+      },
+      {
+        "name": "其他收入",
+        "icon": "ellipsis",
+        "color": "#595959"
+      }
+    ]
+  },
+  "reminders": {
+    "defaultDaysBefore": 3,
+    "lookaheadDays": 14,
+    "cardExpiryDays": 60
+  },
+  "customFields": {
+    "institution": [],
+    "account": [],
+    "card": [],
+    "transaction": []
+  }
+}

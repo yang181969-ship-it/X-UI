@@ -1,0 +1,8 @@
+# Local `npm run cf:dev` (copy to .dev.vars — never commit it). Overrides wrangler.jsonc vars.
+# Generate values with: openssl rand -base64 32
+APP_ENC_KEY=
+SESSION_PEPPER=
+SETUP_TOKEN=
+RP_ID=localhost
+ORIGINS=http://localhost:8790
+COOKIE_SECURE=false

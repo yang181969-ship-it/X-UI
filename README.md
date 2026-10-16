@@ -1,0 +1,266 @@
+# Z-UI 个人账本
+
+自用的记账网站，管理多国家、多银行、多账户、多卡片的资金。界面风格与动画参考 [3x-ui](https://github.com/MHSanaei/3x-ui)，前端用 React 19 + Ant Design 6，有暗色、极暗、亮色三套主题。后端用 Hono：同一份代码既能在 Mac 本地运行，也能部署到 **Cloudflare Workers + D1（免费版）**。
+
+## 功能
+
+- **登录安全**（只有你一个账号，没有注册入口）
+  - 主力登录方式是 **Passkey**（指纹 / Face ID）；备用方式是 **密码 + Google Authenticator 验证码**，另有一次性恢复码。
+  - 查看完整卡号、修改安全设置或全局设置之前，需要在 5 分钟内再验证一次。
+  - 连续输错会被锁定；登录记录写入审计日志。
+- **资金结构**：银行/机构（按国家分组，也可以选「🌐 全球 / 不限国家」）→ 账户 → 卡片。
+  - 一个账户可以有**多个币种**，每个币种可以单独设置是否「计入总账」；余额为 0 的币种自动隐藏。
+  - 一个账户可以绑定多张卡；支持**虚拟卡**（挂在实体卡下，可设消费限额和锁定商户）。
+- **Stripe 风格卡面**
+  - 卡面可翻转；支持银联 16–19 位（不做 Luhn 校验）和 Amex 15 位；卡号输完才校验；有效期按 `MM / YY` 输入。
+  - 完整卡号用 AES-256-GCM **加密**保存；列表只显示后四位，**不保存 CVV**。
+  - 只保存卡号前 6 位作为 BIN，录卡时自动带出发卡行、卡等级和国家。
+- **流水**：收入 / 支出 / 转账 / 余额调整。
+  - 跨币种转账（包括同一账户内换汇）会记录实际到账金额。
+  - 支持分类、标签和币种筛选。分类已经细分，例如 AI 服务、流媒体、开发工具、云服务器、邮件转寄。
+- **账单**：只分「一次性」和「订阅」两种。
+  - 订阅的首次扣款日可以早于今天。过去的期数可以「记为已付并生成流水」「仅标记已付」或「保持待付」。
+  - 页面依次显示逾期、即将到期，历史记录折叠在最下面。
+- **信用卡还款**：手动录入银行账单，记录还款后自动算出已还和未还金额。
+- **信用额度**：信用账户设置额度后，显示已用百分比（80% 起标黄）。欠款超过额度时，提醒铃铛每天提醒一次，直到降回额度内。
+- **统计**：月度收支柱状图（悬停查看明细，可切换成表格），以及按分类、按标签、按机构的排行。
+  - 「含股票收益」开关默认打开：每次卖出的已实现盈亏按卖出日计入，盈利算收入，亏损算支出（仅 USD）。
+- **汇率**：手动点「同步汇率」获取（exchangerate-api.com，备用 ECB），也可以手动修改。首页的「折合」卡片可以选择折算成哪种货币（默认 USD，选择会记在当前浏览器）。
+- **美股**：
+  - 股票属于类型为「投资」的账户（需要含 USD）。投资账户的余额 = 现金 + 持仓市值。
+  - 买卖可以另选「扣款账户」：买入从那里扣款，卖出所得打入那里；不选则只记录持仓。
+  - 成交价最多两位小数；也可以填成交金额，自动算出均价。所有价格统一显示两位小数。
+  - 按平均成本计算浮动盈亏和已实现盈亏。
+  - 股价手动点「同步股价」更新（默认 Yahoo Finance，失败时换备用地址重试；也可以配置 Finnhub），也可以手动填写。
+  - 行情源找不到的代码（例如把 AAPL 拼成 APPL）会给出建议代码，一键改正所有相关交易。
+- **BIN 查询**：公开 BIN 库共 45.4 万条，可在站内按前 3–6 位查询；卡片的发卡行信息可以手动修正，见下文「BIN 库」。
+- **个人资料**：在「安全」页修改显示名称和头像（图片在浏览器内裁成 192 像素再保存）。
+- **设置保存在数据库中**，在页面上修改后立即生效，不需要改源码或提交 Git。可以修改币种、国家、提醒天数和自定义栏位（例如「账户状态」，可以显示成单独的标签栏），也可以导入新的默认分类。
+- 默认币种为 **USD**，默认国家为 **美国**。
+
+## 在 Mac 上运行
+
+需要 **Node.js 24 LTS**（最低 22.12），可以用 [fnm](https://github.com/Schniz/fnm) 安装：
+
+```bash
+brew install fnm && fnm install 24 && fnm use 24
+cd /Volumes/ubuntu-share/z-ui     # 或者你放项目的目录
+
+# 这个目录和 Linux 共享：node_modules 里有按平台编译的二进制，换平台后必须重新安装
+rm -rf node_modules
+npm install
+
+# 首次运行时，如果没有 .env 会自动生成（含随机密钥）。请把其中的 APP_ENC_KEY 另外备份。
+npm run create-admin      # 设置用户名和密码，用 Google Authenticator 扫码，保存恢复码
+npm run dev               # 打开 http://localhost:5173
+```
+
+第一次先用「密码 + 验证码」登录，然后在 **安全** 页添加 Passkey，之后就可以一键登录。
+
+> **请用 `http://localhost` 访问**，不要用 `127.0.0.1` 或局域网 IP。Passkey 只在安全上下文中可用，并且绑定的是域名 `localhost`。
+
+生产模式（本机）：`npm run build && npm start`，然后打开 http://localhost:8787。这时 API 会同时提供页面。
+
+## 必读：密钥与备份
+
+| 位置 | 说明 |
+|---|---|
+| `APP_ENC_KEY` | 加密完整卡号和 TOTP 密钥。**丢失后已保存的卡号无法解密，请另外备份。** |
+| `SESSION_PEPPER` | 参与密码哈希。修改后密码会失效。 |
+| `data/z-ui.db` | 本地数据库（SQLite）。资金数据按你的要求明文保存，备份时直接复制这个文件即可。 |
+
+本地的密钥在 `.env` 中，部署后的密钥在 Cloudflare 的 Secrets 中。`.env`、`.dev.vars` 和 `data/` 都不会被提交到 Git。
+
+## BIN 库
+
+BIN 库已经生成在 `apps/web/public/bin/` 中，按前 3 位拆成 771 个静态文件，共 45.4 万条：
+
+- 数据来自 [Techbuddie-Solutions/binlist-data](https://github.com/Techbuddie-Solutions/binlist-data)（CC BY 4.0，每月更新）。它合并了 [iannuttall](https://github.com/iannuttall/binlist-data)（2020 年，已停更）和 [venelinkochev](https://github.com/venelinkochev/bin-list-data)（2025 年 2 月）两份公开数据，冲突时取较新的一份。
+- 以后想更新数据，运行 `npm run bin:sync` 即可。
+- 查询完全在浏览器内进行：只按前 3 位下载对应的分片，**不会请求 API**。在 Cloudflare 上，这些文件属于免费且不限量的静态资源。
+- **公开数据的局限**：
+  - 最新只到 2025 年 2 月，而且不是官方 IIN 注册表。
+  - 没有 8 位 BIN：2022 年起 Visa/Mastercard 改用 8 位号段，同一个前 6 位可能属于多家银行。
+- **手动修正**：卡片不对时，编辑卡片 → 点卡面下方的「修正」，填入正确的发卡行、类型、等级和国家。
+  - 修正保存在这张卡上（标为「已手动修正」），优先于公开数据，在 BIN 查询页也会显示。
+  - 想放弃修正时，点「恢复公开数据」。
+- 每条公开记录都显示「数据日期」（来源最后确认的日期）。
+- 这个目录不提交到 Git（约 45 MB）。在新机器上 clone 后需要先运行 `npm run bin:sync`；在那之前，BIN 查询页会提示数据尚未生成，其他功能不受影响。
+
+## 部署到 Cloudflare（免费版）
+
+整体结构如下：
+
+- 页面、JS 文件和 BIN 库由 **Workers Static Assets** 提供，免费且不限量，**不计入**每天 10 万次的请求额度。
+- 只有 `/api/*` 会运行 Worker 代码（见 `wrangler.jsonc` 中的 `run_worker_first`）。
+- 数据存放在 **D1**。
+
+前提是你的域名已经托管在 Cloudflare 上。下文以 `z.example.com` 为例。
+
+### 1. 创建数据库，填写 `wrangler.jsonc`
+
+```bash
+npx wrangler login
+npx wrangler d1 create z-ui        # 记下输出中的 database_id
+```
+
+打开 `wrangler.jsonc`，修改标注了 TODO 的三处：
+
+- `d1_databases[0].database_id`：填入上一步得到的 id。
+- `routes[0].pattern`：改成你的子域名。Cloudflare 会自动创建 DNS 记录和证书。
+- `vars.RP_ID` 和 `vars.ORIGINS`：改成同一个域名，分别写 `z.example.com` 和 `https://z.example.com`。
+
+### 2. 设置密钥（不写进任何文件）
+
+```bash
+npx wrangler secret put APP_ENC_KEY      # 迁移本地数据时，填 .env 中的同一个值；全新部署时用 openssl rand -base64 32 生成
+npx wrangler secret put SESSION_PEPPER   # 同上
+npx wrangler secret put SETUP_TOKEN      # 一次性初始化口令，例如 openssl rand -hex 24 的输出
+# 可选：npx wrangler secret put FINNHUB_API_KEY
+```
+
+### 3. 部署
+
+```bash
+npm run cf:deploy
+```
+
+这条命令会依次执行：检查 `wrangler.jsonc` → 构建前端 → 对远端 D1 应用迁移 → 部署 Worker。之后改了代码，再运行一次即可。
+
+### 4. 初始化账号
+
+打开 `https://z.example.com/setup/<SETUP_TOKEN>`：
+
+1. 设置用户名和密码。
+2. 用 Google Authenticator 扫码，并保存恢复码。
+3. 到 **安全** 页注册 Passkey。Passkey 绑定域名，所以在 localhost 注册的不能在这里用，需要重新注册。
+
+账号创建后，这个链接立即失效。之后可以执行 `npx wrangler secret delete SETUP_TOKEN` 删除这个口令。
+
+### 5. 防止爬虫消耗额度（强烈建议）
+
+免费版每天有 10 万次 Worker 请求，超出后 `/api/*` 会返回 429，网站要等到 UTC 0 点才能恢复。静态资源不受影响，但页面已经无法读取数据。只要不让陌生请求进入 Worker，就不会出现这种情况。
+
+**方法 A：Cloudflare Access（推荐，Zero Trust 免费版最多 50 人）**
+
+1. 打开 Cloudflare 控制台 → Zero Trust → Access → Applications → Add an application → **Self-hosted**。
+2. Domain 填 `z.example.com`，Session duration 可以设为 1 个月。
+3. Policy 选 Allow，Include → Emails 填你自己的邮箱；登录方式用 One-time PIN（邮箱验证码），不需要额外配置。
+
+这样配置后，未通过 Access 的请求会**在 Cloudflare 边缘被拦下**，根本不会运行 Worker，也就不消耗额度；爬虫连登录页都看不到。你自己的流程是：先通过 Access（每月一次邮箱验证码），再用 Passkey 登录。
+
+> Access 会话过期后，页面里的请求会报「网络错误」，刷新页面重新通过 Access 即可。
+
+**方法 B：WAF 自定义规则（免费版提供 5 条）**
+
+如果不想用 Access，可以在 Security → WAF → Custom rules 中新增一条规则，动作选 **Block**，表达式如下：
+
+```
+(starts_with(http.request.uri.path, "/api/") and not starts_with(http.request.uri.path, "/api/auth/") and not starts_with(http.request.uri.path, "/api/setup/") and not http.cookie contains "zui_session")
+```
+
+没有登录 cookie 的 API 请求会在边缘被拦截。登录接口仍然对外开放，但已经由 Worker 内的限速（`AUTH_LIMITER`，每个 IP 每分钟 20 次）和账号锁定保护。建议同时打开 Security → Bots → **Bot Fight Mode**。
+
+另外，项目已经设置了 `robots.txt`（`Disallow: /`）、`X-Robots-Tag: noindex` 和 `workers_dev: false`（关闭 `*.workers.dev` 入口），正规搜索引擎不会收录这个网站。
+
+### 免费版额度与本项目的用量
+
+| 限制（免费版） | 额度 | 本项目 |
+|---|---|---|
+| Worker 请求 | 10 万次/天（UTC 0 点重置） | 只有 `/api/*` 计数。前端缓存 60 秒，正常使用一天约几百次 |
+| CPU 时间 | 10 ms/请求 | 密码哈希 PBKDF2 5 万次约 3.5 ms；单个账单最多 600 期（每周扣款约 11 年，每月扣款 50 年） |
+| 子请求（D1 查询也计入） | 50 次/请求 | 测试会检查每个接口都不超过 50 次；最多的「同步股价」约 36 次（每次最多更新 30 只，最久没更新的优先） |
+| D1 读取 | 500 万行/天 | 余额是缓存值，不必每次扫描全部流水 |
+| D1 写入 | 10 万行/天（索引也计入） | 日常每笔几行到十几行；一次补记几百期历史约几千行 |
+| D1 容量 | 单库 500 MB | 个人账本通常只有几 MB |
+| 单条 SQL | 100 个参数，100 KB | 已经分块写入；测试数据库强制执行同样的限制 |
+| 静态文件 | 2 万个，单个 ≤ 25 MiB | 约 830 个（包括 BIN 库） |
+
+### 更新已部署的网站（保留现有数据）
+
+```bash
+npx wrangler d1 export z-ui --remote --output=d1-backup-$(date +%Y%m%d).sql   # 先备份线上数据
+npm run cf:deploy
+```
+
+- `cf:deploy` 会先对线上 D1 执行**尚未执行过的**迁移，再部署新代码；已经执行过的迁移不会重复执行。
+- 迁移只做增加，不删除也不改写已有的数据。例如 `0002` 只是新增了两列：
+  - 「扣款账户」：自动填为原来记账的账户；
+  - 「头像」。
+- D1 自带 Time Travel，可以把数据库恢复到过去 7 天内的任意时间点（免费版）。备份文件就是一份完整的 SQL，可以用 `wrangler d1 execute --file` 导回。
+- 如果在 Mac 上用的是项目的副本，从共享目录同步代码时，**不要覆盖**你自己的 `wrangler.jsonc`、`.env`、`.dev.vars` 和 `data/`：
+
+```bash
+rsync -a --exclude node_modules --exclude .env --exclude .dev.vars --exclude data --exclude wrangler.jsonc --exclude .wrangler \
+  /Volumes/ubuntu-share/z-ui/ ~/Desktop/z-ui-2/
+```
+
+### 把本地数据搬到 Cloudflare（可选）
+
+```bash
+npm run d1:export                                            # 生成 data/d1-import.sql
+npx wrangler d1 execute z-ui --remote --file=data/d1-import.sql
+```
+
+- **注意**：Cloudflare 上的 `APP_ENC_KEY` 和 `SESSION_PEPPER` 必须和本地 `.env` 中的一致，否则卡号、TOTP 和密码都无法使用。
+- 会话和 Passkey 不会被导出（Passkey 绑定的是 `localhost`），搬过去后先用「密码 + 验证码」登录，再重新注册 Passkey。
+- 本地数据库中已经有账号，所以搬过去后不需要使用 setup 链接。
+- 如果本地的密码哈希是旧版（10 万次迭代），导出脚本会提示你先在本地用密码登录一次，系统会自动把哈希转换成 5 万次。
+
+### 在本机模拟 Cloudflare
+
+```bash
+cp .dev.vars.example .dev.vars          # 填入随机值
+npx wrangler d1 migrations apply z-ui --local
+npm run cf:dev                          # 打开 http://localhost:8790，在真实的 workerd 和本地 D1 上运行
+node e2e/cf-smoke.mjs http://localhost:8790 <SETUP_TOKEN>   # API 冒烟测试
+```
+
+## 目录结构
+
+```
+config/app.config.json   全新安装时的默认设置（之后的设置以数据库为准）
+packages/shared/         前后端共用：zod 校验、金额（整数最小单位）、卡号、周期、配置 diff
+apps/api/                Hono 后端
+  src/app.ts             路由组装（与运行时无关）
+  src/node.ts            本地入口（libsql / SQLite）
+  src/worker.ts          Cloudflare 入口（D1）
+  src/auth/              密码 / TOTP / Passkey / 会话 / 限速 / 二次验证
+  src/routes/            各资源的 REST 接口
+  src/db/                Drizzle schema 与迁移（本地和 D1 共用）
+apps/web/                React 19 + Ant Design 6 前端
+scripts/                 bin-sync（BIN 库）、export-d1（数据迁移）、cf-check（部署前检查）
+e2e/                     Playwright 端到端测试、Cloudflare 冒烟测试
+wrangler.jsonc           Cloudflare 部署配置
+```
+
+## 测试
+
+```bash
+npm test           # 单元测试 + API 集成测试（vitest）
+npm run test:e2e   # 浏览器端到端测试（首次运行先执行：npx playwright install chromium）
+npm run typecheck
+npm run lint
+```
+
+- **API 测试**：
+  - 测试数据库按 D1 的规则运行：每条 SQL 最多 100 个参数，每个请求的子请求不超过 50 次。
+  - 覆盖未登录访问、CSRF、锁定、TOTP 防重放、恢复码、二次验证和卡号加密。
+  - 覆盖多币种余额、转账、账单历史、统计（含股票收益）、汇率与折算货币、美股（投资账户市值、扣款账户、代码纠正）、信用额度提醒、头像、BIN 记录和缓存余额的一致性。
+  - 迁移测试：用旧结构的数据库验证每个迁移都保留并正确转换已有数据。
+- **端到端测试**：
+  1. 登录，注册 Passkey。
+  2. 建多币种账户和卡片，记流水。
+  3. 建订阅账单（含历史记录）。
+  4. 添加自定义栏位。
+  5. 在投资账户买入美股（从活期扣款），检查两位小数和市值；设置汇率，切换折算货币。
+  6. 查看统计，查询 BIN 并手动修正，更换头像。
+  7. 检查主题切换和手机布局。
+
+> 如果机器上有 HTTP 代理（例如 Clash 的 `127.0.0.1:7890`），请设置 `NO_PROXY=localhost,127.0.0.1`。Playwright 配置里已经自动处理。
+
+## 后续可做
+
+- 加密货币：按平台记录，以 USD 统计。
+- 汇损：按每笔跨币种转账，以中间价计算换汇损失。
+- 定时同步汇率和股价（Cron Triggers，免费版可用），目前为手动同步。
