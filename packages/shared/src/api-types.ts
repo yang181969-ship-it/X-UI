@@ -101,6 +101,8 @@ export interface InstitutionDto {
 export interface AccountCurrencyDto {
   currency: string;
   openingBalance: number;
+  /** The opening balance is the balance at the end of this day (null: all transactions count). */
+  balanceDate: string | null;
   includeInTotal: boolean;
   /** Opening balance + Σ transactions in this currency. */
   balance: number;
@@ -341,9 +343,14 @@ export interface DashboardDto {
 }
 
 export interface StatsDto {
-  /** Currencies with income/expense in the range (no FX conversion — one currency at a time). */
+  /** Currencies with income/expense (or stock activity) in the range. */
   currencies: string[];
+  /** The single currency shown, or null for the combined view. */
   currency: string | null;
+  /** Combined view: everything converted to this currency with the synced FX rates. */
+  convertedTo: string | null;
+  /** Combined view: currencies left out for lack of an FX rate. */
+  missing: string[];
   totals: { income: number; expense: number; count: number };
   months: { month: string; income: number; expense: number }[];
   byCategory: { categoryId: string | null; amount: number; count: number }[];

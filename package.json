@@ -22,7 +22,6 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "lint": "oxlint packages apps",
-    "bin:sync": "NODE_USE_ENV_PROXY=1 node scripts/bin-sync.mjs",
     "d1:export": "node scripts/export-d1.mjs",
     "cf:dev": "npm run build && wrangler dev --port 8790 --local-upstream localhost:8790",
     "cf:deploy": "node scripts/cf-check.mjs && npm run build && wrangler d1 migrations apply z-ui --remote && wrangler deploy"

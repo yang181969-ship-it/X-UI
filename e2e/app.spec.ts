@@ -1,6 +1,5 @@
-import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { expect, test, type BrowserContext, type Page } from '@playwright/test';
+import { expect, test, type BrowserContext, type Locator, type Page } from '@playwright/test';
 import dayjs from 'dayjs';
 import { ADMIN, ADMIN_TOTP_SECRET, totp } from './fixtures.ts';
 
@@ -32,6 +31,14 @@ async function pick(p: Page, label: string, option: string | RegExp) {
 }
 
 const modal = (p: Page) => p.locator('.ant-modal:visible').last();
+
+/** Type a date into a currency row's balance-date picker. */
+async function setBalanceDate(row: Locator, date: string) {
+  const input = row.locator('.ant-picker input');
+  await input.click();
+  await input.fill(date);
+  await input.press('Enter');
+}
 
 async function okModal(p: Page) {
   await modal(p).getByRole('button', { name: btn('确定') }).click();
@@ -110,7 +117,10 @@ test('sets up banks, multi-currency accounts, a card and transactions', async ()
         await page.locator('.ant-select-dropdown:visible .ant-select-item-option').filter({ hasText: new RegExp(`^${cur}$`) }).first().click();
       }
       await row.locator('input.ant-input-number-input').fill(opening);
+      // Balance as of long before the test data, so every transaction below counts.
+      await setBalanceDate(row, '2025-01-01');
     }
+    if (rows.length > 1) await shot(page, '03b-account-form');
     await okModal(page);
     await expect(page.locator('.row-title').filter({ hasText: name })).toBeVisible();
   };
@@ -306,35 +316,60 @@ test('records US stocks in an investment account, paid from Checking', async () 
   await page.keyboard.press('Escape');
 });
 
-test('converts the net worth with a manual rate, in a currency of your choice', async () => {
+test('converts the net worth with manual rates, in CNY by default', async () => {
   await page.goto('/fx');
-  const hkd = page.locator('.ant-table-row').filter({ hasText: 'HKD' });
-  await hkd.getByRole('button', { name: '修改汇率' }).click();
-  await modal(page).getByRole('spinbutton').fill('7.8');
-  await okModal(page);
-  await expect(hkd).toContainText('7.8 HKD');
-  await expect(hkd).toContainText('手动');
+  const setRate = async (code: string, rate: string) => {
+    const row = page.locator('.ant-table-row').filter({ hasText: code });
+    await row.getByRole('button', { name: '修改汇率' }).click();
+    await modal(page).getByRole('spinbutton').fill(rate);
+    await okModal(page);
+    await expect(row).toContainText(`${rate} ${code}`);
+    await expect(row).toContainText('手动');
+  };
+  await setRate('HKD', '7.8');
+  await setRate('CNY', '7');
   await shot(page, '17-fx');
 
   await page.goto('/');
-  // USD 9,404.50 = cash 9,004.50 (after bills, $300 + $100 of stock) + Brokerage $400; HKD 12,800 / 7.8.
+  // USD 9,404.50 = cash 9,004.50 (after bills, $300 + $100 of stock) + Brokerage $400; HKD 12,800.
   await expect(page.locator('.stat-net').filter({ hasText: '9,404.50' })).toBeVisible();
   const tile = page.locator('.stat-converted');
   await expect(tile).toContainText('折合');
-  await expect(tile.locator('.stat-net')).toHaveText('$11,045.53');
-  await tile.locator('.convert-currency').click();
-  await page.locator('.ant-select-dropdown:visible .ant-select-item-option').filter({ hasText: /^HKD$/ }).click();
-  await expect(tile.locator('.stat-net')).toHaveText('HK$86,155.10');
+  // Default CNY: $9,404.50 × 7 + HK$12,800 / 7.8 × 7.
+  await expect(tile.locator('.convert-currency')).toContainText('CNY');
+  await expect(tile.locator('.stat-net')).toHaveText('¥77,318.68');
   await page.waitForTimeout(800);
   await shot(page, '02b-dashboard-converted');
-  await tile.locator('.convert-currency').click();
-  await page.locator('.ant-select-dropdown:visible .ant-select-item-option').filter({ hasText: /^USD$/ }).click();
+  const choose = async (code: string) => {
+    await tile.locator('.convert-currency').click();
+    await page.locator('.ant-select-dropdown:visible .ant-select-item-option').filter({ hasText: new RegExp(`^${code}$`) }).click();
+  };
+  await choose('HKD');
+  await expect(tile.locator('.stat-net')).toHaveText('HK$86,155.10');
+  await choose('USD');
   await expect(tile.locator('.stat-net')).toHaveText('$11,045.53');
+  await choose('CNY');
+  await expect(tile.locator('.stat-net')).toHaveText('¥77,318.68');
 });
 
 test('statistics: KPIs, monthly chart with tooltip, category ranking', async () => {
+  // This month's income in another currency (HK$780 salary) must show up by default.
+  await page.goto('/transactions');
+  await page.getByRole('button', { name: '记一笔' }).click();
+  await modal(page).locator('.ant-segmented-item').filter({ hasText: '收入' }).click();
+  await pick(page, '账户', /HKD Savings/);
+  await page.getByLabel('金额', { exact: true }).fill('780');
+  await page.getByLabel('商户 / 对方', { exact: true }).fill('Salary');
+  await modal(page).getByRole('button', { name: btn('保存') }).click();
+  await expect(page.locator('.ant-modal-wrap:visible')).toHaveCount(0);
+
   await page.goto('/stats');
-  // 35.50 lunch + 3 × 20 ChatGPT; transfers and stock trades are not spending.
+  // By default all currencies combined in CNY (HK$780 / 7.8 × 7 = ¥700), the current month included.
+  await expect(page.locator('.ant-segmented-item-selected').filter({ hasText: '全部（折合 CNY）' })).toBeVisible();
+  await expect(page.locator('.stat-tile').filter({ hasText: '收入' })).toContainText('¥700.00');
+  await expect(page.locator('.stat-tile').filter({ hasText: '支出' })).toContainText('¥668.50'); // $95.50 × 7
+  // USD only: 35.50 lunch + 3 × 20 ChatGPT; transfers and stock trades are not spending.
+  await page.locator('.ant-segmented-item').filter({ hasText: /^USD$/ }).click();
   await expect(page.locator('.stat-tile').filter({ hasText: '支出' })).toContainText('$95.50');
   const monthly = page.locator('.ant-card').filter({ hasText: '月度收支' });
   await expect(monthly.locator('.viz-plot svg')).toBeVisible();
@@ -345,6 +380,10 @@ test('statistics: KPIs, monthly chart with tooltip, category ranking', async () 
   await page.locator('.ant-segmented-item').filter({ has: page.locator('.anticon-table') }).click();
   await expect(page.locator('.ant-table-row').filter({ hasText: dayjs().format('YYYY-MM') })).toBeVisible();
   await expect(page.getByRole('switch')).toBeChecked(); // stock gains counted by default
+  // One currency at a time is still possible.
+  await page.locator('.ant-segmented-item').filter({ hasText: /^HKD$/ }).click();
+  await expect(page.locator('.stat-tile').filter({ hasText: '收入' })).toContainText('HK$780.00');
+  await page.locator('.ant-segmented-item').filter({ hasText: /^USD$/ }).click();
   // Stock money in/out of Checking is shown on its own (buying shares is not spending).
   await expect(page.locator('.ant-card').filter({ hasText: '股票资金进出' })).toContainText('$400.00');
 });
@@ -363,7 +402,7 @@ test('hidden small spending: out of the list by default, still in the statistics
   await expect(page.locator('.ant-table-row').filter({ hasText: 'Snack' })).toContainText('hidden');
   await page.locator('.switch-label').filter({ hasText: '显示 hidden' }).getByRole('switch').click();
   await page.goto('/stats');
-  await expect(page.locator('.stat-tile').filter({ hasText: '支出' })).toContainText('$98.50'); // 95.50 + 3
+  await expect(page.locator('.stat-tile').filter({ hasText: '支出' })).toContainText('¥689.50'); // ($95.50 + $3) × 7
 });
 
 test('credit usage sits on its own line and over-limit is reminded', async () => {
@@ -387,39 +426,38 @@ test('credit usage sits on its own line and over-limit is reminded', async () =>
   await page.keyboard.press('Escape');
 });
 
-test('BIN lookup from the static files (when generated)', async () => {
-  const generated = existsSync(resolve(import.meta.dirname, '../apps/web/public/bin/meta.json'));
-  await page.goto('/bins');
-  if (!generated) {
-    await expect(page.getByText('BIN 库尚未生成')).toBeVisible();
-    return;
-  }
-  const input = page.getByPlaceholder('输入卡号前 6 位');
-  await input.fill('4242');
-  await expect(page.getByText(/共 \d+ 个匹配的 BIN/)).toBeVisible();
-  await input.fill('424242');
-  await expect(page.locator('.ant-descriptions').first()).toContainText('VISA');
-  // The card added earlier is listed with its BIN.
-  await expect(page.locator('.ant-table-row').filter({ hasText: '424242' })).toBeVisible();
-
-  // Correct the public record by hand on the card; the correction wins everywhere.
-  await page.goto('/cards');
-  await page.locator('#root .card-tile').first().click();
-  await page.locator('.ant-drawer').getByRole('button', { name: /编\s*辑/ }).click();
-  await modal(page).getByRole('button', { name: '修正' }).click();
-  await modal(page).locator('.bin-editor input').first().fill('MY BANK');
-  await modal(page).getByRole('button', { name: '使用这些信息' }).click();
-  await expect(modal(page).locator('.bin-line')).toContainText('MY BANK');
-  await expect(modal(page).locator('.bin-line')).toContainText('已手动修正');
+test('balance date: the synced balance includes that day; only later transactions count', async () => {
+  await page.goto('/accounts');
+  await page.locator('.ant-card').filter({ has: page.locator('.ant-card-head', { hasText: 'Wise' }) }).getByRole('button', { name: '添加账户' }).click();
+  await page.getByLabel('名称', { exact: true }).fill('Wallet');
+  const row = modal(page).locator('.currency-row').first();
+  await row.locator('input.ant-input-number-input').fill('100');
+  await setBalanceDate(row, dayjs().subtract(1, 'day').format('YYYY-MM-DD'));
   await okModal(page);
-  await expect(page.locator('.ant-modal-wrap:visible')).toHaveCount(0);
-  await page.goto('/bins');
-  const mine = page.locator('.ant-table-row').filter({ hasText: '424242' });
-  await expect(mine).toContainText('MY BANK');
-  await expect(mine).toContainText('已手动修正');
-  await page.getByPlaceholder('输入卡号前 6 位').fill('424242');
-  await expect(page.locator('.ant-descriptions')).toHaveCount(2); // your correction + the public record
-  await shot(page, '19-bins');
+  const wallet = page.locator('#root .row-item').filter({ hasText: /^Wallet/ });
+  await expect(wallet).toContainText('$100.00');
+
+  const spend = async (amount: string, date: string, who: string) => {
+    await page.goto('/transactions');
+    await page.getByRole('button', { name: '记一笔' }).click();
+    await pick(page, '账户', /Wallet/);
+    await page.getByLabel('金额', { exact: true }).fill(amount);
+    await page.getByLabel('商户 / 对方', { exact: true }).fill(who);
+    const d = page.getByLabel('日期', { exact: true });
+    await d.click();
+    await d.fill(date);
+    await d.press('Enter');
+    await modal(page).getByRole('button', { name: btn('保存') }).click();
+    await expect(page.locator('.ant-modal-wrap:visible')).toHaveCount(0);
+  };
+  await spend('30', dayjs().format('YYYY-MM-DD'), 'Today'); // after the balance date: counts
+  await spend('50', dayjs().subtract(1, 'day').format('YYYY-MM-DD'), 'Yesterday'); // that day: already included
+  await page.goto('/accounts');
+  await expect(wallet).toContainText('$70.00');
+  await wallet.click();
+  await expect(page.locator('.ant-drawer .tx-not-counted')).toContainText('Yesterday');
+  await shot(page, '23-balance-date');
+  await page.keyboard.press('Escape');
 });
 
 test('changes the profile picture', async () => {

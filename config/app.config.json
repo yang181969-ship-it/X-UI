@@ -4,6 +4,7 @@
     "name": "Z-UI",
     "defaultLocale": "zh-CN",
     "defaultCurrency": "USD",
+    "summaryCurrency": "CNY",
     "defaultCountry": "US"
   },
   "currencies": [

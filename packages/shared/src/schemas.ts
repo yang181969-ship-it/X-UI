@@ -99,10 +99,15 @@ export const institutionSchema = z.object({
 });
 export const institutionPatchSchema = institutionSchema.partial();
 
-/** One currency held by an account, with its balance before the first recorded transaction. */
+/**
+ * One currency held by an account. openingBalance is the balance at the end of balanceDate:
+ * transactions dated after it change the balance, earlier ones (and that day's) do not.
+ * Without a date every transaction counts.
+ */
 export const accountCurrencySchema = z.object({
   currency: currencyCodeSchema,
   openingBalance: minorSchema.default(0),
+  balanceDate: isoDateSchema.nullish(),
   /** Count this balance in the dashboard totals. */
   includeInTotal: z.boolean().default(true),
 });
@@ -327,6 +332,8 @@ export const statsQuerySchema = z.object({
   accountId: idSchema.optional(),
   /** Count realized stock gains/losses as income/expense (USD). On unless "0". */
   invest: z.enum(['0', '1']).optional(),
+  /** Without `currency`: convert everything to this currency (default: the app's). */
+  convertTo: currencyCodeSchema.optional(),
 });
 
 /** Decimal string with up to 6 fraction digits, e.g. "12.5" shares or "187.2345" dollars. */

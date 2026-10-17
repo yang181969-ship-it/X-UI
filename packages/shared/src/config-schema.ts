@@ -86,6 +86,11 @@ export const appConfigSchema = z
       name: z.string().trim().min(1).max(32),
       defaultLocale: z.enum(['zh-CN', 'en']).default('zh-CN'),
       defaultCurrency: z.string().regex(/^[A-Z]{3}$/),
+      /**
+       * Currency the overview's net worth and the statistics are converted to by default.
+       * Falls back to defaultCurrency when it is not one of the currencies.
+       */
+      summaryCurrency: z.string().regex(/^[A-Z]{3}$/).default('CNY'),
       /** Pre-selected country for new institutions ("ZZ" = global / no specific country). */
       defaultCountry: z.string().regex(/^[A-Z]{2}$/).default('US'),
     }),
@@ -134,6 +139,12 @@ export type Country = z.infer<typeof countrySchema>;
 /** Stable JSON for writing the config file so Git diffs stay minimal. */
 export function serializeConfig(cfg: AppConfig): string {
   return JSON.stringify(cfg, null, 2) + '\n';
+}
+
+/** Default currency of the overview's converted total and of the statistics. */
+export function summaryCurrency(cfg: Pick<AppConfig, 'app' | 'currencies'>): string {
+  const code = cfg.app.summaryCurrency;
+  return cfg.currencies.some((c) => c.code === code) ? code : cfg.app.defaultCurrency;
 }
 
 export function currencyDecimals(cfg: Pick<AppConfig, 'currencies'>, code: string): number {
