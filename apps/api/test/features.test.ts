@@ -224,8 +224,9 @@ describe('statistics', () => {
     await tx({ type: 'expense', accountId: hk, currency: 'HKD', amount: 8800, occurredAt: '2026-09-21' });
     await tx({ type: 'transfer', fromAccountId: usd, toAccountId: hk, toCurrency: 'USD', amount: 10000, occurredAt: '2026-09-22' });
 
-    const s = (await a.get('/api/stats?from=2026-07-01&to=2026-10-31')).json;
-    expect(s.currency).toBe('USD'); // most used currency by default
+    // One currency at a time…
+    const s = (await a.get('/api/stats?from=2026-07-01&to=2026-10-31&currency=USD')).json;
+    expect(s).toMatchObject({ currency: 'USD', convertedTo: null, missing: [] });
     expect(s.currencies.sort()).toEqual(['HKD', 'USD']);
     expect(s.totals).toEqual({ income: 500000, expense: 5549, count: 4 });
     expect(s.months).toEqual([
@@ -239,6 +240,28 @@ describe('statistics', () => {
       { categoryId: stream, amount: 1549, count: 1 },
     ]);
     expect(s.byTag).toEqual([{ tagId: tag, amount: 4000, count: 2 }]);
+
+    // …or everything converted to one currency: by default the summary currency (CNY).
+    expect((await a.get('/api/stats?from=2026-07-01&to=2026-10-31')).json).toMatchObject({ currency: null, convertedTo: 'CNY', missing: ['USD', 'HKD'] });
+    // Without an HKD rate the HKD spending is left out and reported as missing.
+    const noRate = (await a.get('/api/stats?from=2026-07-01&to=2026-10-31&convertTo=USD')).json;
+    expect(noRate).toMatchObject({ currency: null, convertedTo: 'USD', missing: ['HKD'], totals: { income: 500000, expense: 5549, count: 4 } });
+    await a.put('/api/fx/HKD', { perUsd: 7.8 });
+    const all = (await a.get('/api/stats?from=2026-07-01&to=2026-10-31&convertTo=USD')).json;
+    expect(all).toMatchObject({ currency: null, convertedTo: 'USD', missing: [] });
+    expect(all.totals).toEqual({ income: 500000, expense: 5549 + 1128, count: 5 }); // HK$88 / 7.8 = $11.28
+    expect(all.months[2]).toEqual({ month: '2026-09', income: 0, expense: 3549 + 1128 });
+    expect(all.byCategory).toEqual([
+      { categoryId: ai, amount: 4000, count: 2 },
+      { categoryId: stream, amount: 1549, count: 1 },
+      { categoryId: null, amount: 1128, count: 1 },
+    ]);
+    expect(all.byInstitution).toEqual([
+      { institutionId: chase, income: 500000, expense: 4000 },
+      { institutionId: hsbc, income: 0, expense: 1549 + 1128 },
+    ]);
+    const inHkd = (await a.get('/api/stats?from=2026-07-01&to=2026-10-31&convertTo=HKD')).json;
+    expect(inHkd).toMatchObject({ convertedTo: 'HKD', totals: { income: 3900000, count: 5 } });
 
     const hsbcOnly = (await a.get(`/api/stats?from=2026-07-01&to=2026-10-31&institutionId=${hsbc}&currency=HKD`)).json;
     expect(hsbcOnly.totals).toEqual({ income: 0, expense: 8800, count: 1 });
@@ -337,11 +360,13 @@ describe('FX rates (manual sync)', () => {
     expect(codes).not.toContain('XYZ'); // not configured → not stored
     expect(sync.json.missing).toContain('JPY');
 
-    const dash = (await a.get('/api/dashboard')).json;
+    // By default the overview converts to the summary currency (CNY): $1,000 + HK$7,800 at 7.2.
+    expect((await a.get('/api/dashboard')).json.converted).toMatchObject({ currency: 'CNY', net: 720000 + 720000, missing: [] });
+    const dash = (await a.get('/api/dashboard?currency=USD')).json;
     expect(dash.converted).toMatchObject({ currency: 'USD', net: 100000 + 100000, missing: [] }); // HK$7,800 = $1,000
     // A manual rate overrides the synced one.
     await a.put('/api/fx/HKD', { perUsd: 7.5 });
-    expect((await a.get('/api/dashboard')).json.converted.net).toBe(100000 + 104000);
+    expect((await a.get('/api/dashboard?currency=USD')).json.converted.net).toBe(100000 + 104000);
     expect(bal((await a.get(`/api/accounts/${acc.id}`)).json, 'HKD')).toBe(780000);
   });
 
@@ -350,7 +375,7 @@ describe('FX rates (manual sync)', () => {
     await account(a, await bank(a), [{ currency: 'HKD', openingBalance: 780000 }]);
     const fx = await a.put('/api/fx/HKD', { perUsd: 7.8 });
     expect(fx.json.syncedAt).toBeNull(); // a typed-in rate is not a sync
-    expect((await a.get('/api/dashboard')).json.converted).toMatchObject({ currency: 'USD', net: 100000, missing: [] });
+    expect((await a.get('/api/dashboard?currency=USD')).json.converted).toMatchObject({ currency: 'USD', net: 100000, missing: [] });
   });
 
   it('falls back to Frankfurter when the first source fails', async () => {
@@ -414,14 +439,14 @@ describe('US stocks', () => {
     expect(dash.totals.find((x: any) => x.currency === 'USD').net).toBe(cash + 223450);
     expect(dash.investments).toMatchObject({ marketValue: 223450, positions: 2 });
     await a.put('/api/fx/HKD', { perUsd: 7.8 });
-    expect((await a.get('/api/dashboard')).json.converted.net).toBe(cash + 223450); // not added twice
+    expect((await a.get('/api/dashboard?currency=USD')).json.converted.net).toBe(cash + 223450); // not added twice
 
     // Realized gains count as income in the statistics unless switched off.
-    const stats = (await a.get('/api/stats?from=2026-01-01&to=2026-12-31')).json;
+    const stats = (await a.get('/api/stats?from=2026-01-01&to=2026-12-31&convertTo=USD')).json;
     expect(stats.invest).toEqual({ gain: 25860, loss: 0, sells: 1 });
     expect(stats.totals).toMatchObject({ income: 25860, expense: 0, count: 1 });
     expect(stats.months.find((m: any) => m.month === '2026-10').income).toBe(25860);
-    expect((await a.get('/api/stats?from=2026-01-01&to=2026-12-31&invest=0')).json.totals.count).toBe(0);
+    expect((await a.get('/api/stats?from=2026-01-01&to=2026-12-31&convertTo=USD&invest=0')).json.totals.count).toBe(0);
 
     // Cash legs can only be changed from the investments page; deleting a trade removes its leg.
     const tradeTx = (await a.get('/api/transactions?type=trade')).json.items[0];
@@ -440,12 +465,12 @@ describe('US stocks', () => {
     const trade = (b: Record<string, unknown>) => a.post('/api/invest/trades', { accountId: broker.id, symbol: 'TSLA', quantity: '2', tradeDate: '2026-03-01', ...b });
     await trade({ side: 'buy', price: '300' });
     await trade({ side: 'sell', quantity: '1', price: '250', tradeDate: '2026-04-02' });
-    const stats = (await a.get('/api/stats?from=2026-01-01&to=2026-12-31')).json;
+    const stats = (await a.get('/api/stats?from=2026-01-01&to=2026-12-31&convertTo=USD')).json;
     expect(stats.currencies).toContain('USD');
     expect(stats.invest).toEqual({ gain: 0, loss: 5000, sells: 1 });
     expect(stats.byCategory).toEqual([{ categoryId: '__invest', amount: 5000, count: 1 }]);
     expect(stats.byInstitution).toEqual([{ institutionId: schwab, income: 0, expense: 5000 }]);
-    expect((await a.get(`/api/stats?from=2026-01-01&to=2026-12-31&institutionId=${await bank(a, 'Other')}`)).json.invest).toBeNull();
+    expect((await a.get(`/api/stats?from=2026-01-01&to=2026-12-31&convertTo=USD&institutionId=${await bank(a, 'Other')}`)).json.invest).toBeNull();
     expect((await a.get('/api/stats?from=2026-01-01&to=2026-12-31&currency=HKD')).json.invest).toBeNull();
   });
 
@@ -582,10 +607,16 @@ describe('dashboard currency', () => {
     const a = await login(t, await makeUser(t, 'alice'));
     await account(a, await bank(a), [{ currency: 'USD', openingBalance: 100000 }, { currency: 'HKD', openingBalance: 780000 }]);
     await a.put('/api/fx/HKD', { perUsd: 7.8 });
-    expect((await a.get('/api/dashboard')).json.converted).toMatchObject({ currency: 'USD', net: 200000 });
+    // Default: the summary currency (CNY), which needs its own rate.
+    expect((await a.get('/api/dashboard')).json.converted).toMatchObject({ currency: 'CNY', missing: ['USD', 'HKD'] });
+    await a.put('/api/fx/CNY', { perUsd: 7 });
+    expect((await a.get('/api/dashboard')).json.converted).toMatchObject({ currency: 'CNY', net: 1400000, missing: [] });
+    expect((await a.get('/api/dashboard?currency=USD')).json.converted).toMatchObject({ currency: 'USD', net: 200000 });
     expect((await a.get('/api/dashboard?currency=HKD')).json.converted).toMatchObject({ currency: 'HKD', net: 1560000, missing: [] });
     expect((await a.get('/api/dashboard?currency=EUR')).json.converted).toMatchObject({ currency: 'EUR', missing: ['USD', 'HKD'] });
-    expect((await a.get('/api/dashboard?currency=XYZ')).json.converted.currency).toBe('USD'); // not configured → default
+    expect((await a.get('/api/dashboard?currency=XYZ')).json.converted.currency).toBe('CNY'); // not configured → default
+    // Everything else keeps the default currency (USD).
+    expect((await a.get('/api/config')).json.app).toMatchObject({ defaultCurrency: 'USD', summaryCurrency: 'CNY' });
   });
 });
 
@@ -721,5 +752,49 @@ describe('what the transactions list shows', () => {
     expect(stats.stockFlows.months).toEqual([{ month: '2026-10', buy: 30000, sell: 16000 }]);
     expect((await a.get('/api/stats?from=2026-10-01&to=2026-10-31&currency=USD&invest=0')).json.stockFlows).toBeNull();
     expect((await a.get('/api/stats?from=2026-10-01&to=2026-10-31&currency=HKD')).json.stockFlows).toBeNull();
+  });
+});
+
+describe('balance date', () => {
+  beforeEach(async () => {
+    t = await setup();
+  });
+  afterEach(() => t.cleanup());
+
+  it('treats the synced balance as the end of that day: only later transactions change it', async () => {
+    const a = await login(t, await makeUser(t, 'alice'));
+    const inst = await bank(a);
+    const acc = await account(a, inst, [{ currency: 'USD', openingBalance: 100000 }, { currency: 'HKD', openingBalance: 5000 }]);
+    const tx = (amount: number, occurredAt: string, currency = 'USD') => a.post('/api/transactions', { type: 'expense', accountId: acc.id, currency, amount, occurredAt });
+    await tx(1000, '2026-10-05');
+    await tx(500, '2026-10-10');
+    await tx(200, '2026-10-11');
+    await tx(300, '2026-10-05', 'HKD');
+    // No date yet: every transaction counts (existing accounts keep their balances).
+    expect(bal((await a.get(`/api/accounts/${acc.id}`)).json, 'USD')).toBe(100000 - 1700);
+
+    // USD synced at the end of Oct 10: the 5th and the 10th are already in the 100,000.
+    const r = await a.patch(`/api/accounts/${acc.id}`, {
+      currencies: [
+        { currency: 'USD', openingBalance: 100000, balanceDate: '2026-10-10' },
+        { currency: 'HKD', openingBalance: 5000 },
+      ],
+    });
+    expect(r.json.currencies).toEqual([
+      expect.objectContaining({ currency: 'USD', balanceDate: '2026-10-10', balance: 100000 - 200 }),
+      expect.objectContaining({ currency: 'HKD', balanceDate: null, balance: 5000 - 300 }),
+    ]);
+    // Later transactions (and transfers) change it; earlier ones don't.
+    await tx(100, '2026-10-12');
+    await tx(999, '2026-10-01');
+    const other = await account(a, inst, [{ currency: 'USD' }]);
+    await a.post('/api/transactions', { type: 'transfer', fromAccountId: acc.id, toAccountId: other.id, amount: 400, occurredAt: '2026-10-09' });
+    await a.post('/api/transactions', { type: 'transfer', fromAccountId: acc.id, toAccountId: other.id, amount: 600, occurredAt: '2026-10-13' });
+    expect(bal((await a.get(`/api/accounts/${acc.id}`)).json, 'USD')).toBe(100000 - 200 - 100 - 600);
+    // Recalculating gives the same, and all transactions still exist.
+    await a.post('/api/accounts/recalc');
+    const fresh = (await a.get(`/api/accounts/${acc.id}`)).json;
+    expect(bal(fresh, 'USD')).toBe(100000 - 900);
+    expect(fresh.currencies[0].transactionCount).toBe(7);
   });
 });

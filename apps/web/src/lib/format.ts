@@ -107,3 +107,23 @@ export function colorFor(seed: string) {
   for (const ch of seed) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
   return palette[h % palette.length]!;
 }
+
+/**
+ * Currency picked for the overview's converted total, shared with the statistics (per browser).
+ * Unset = the configured summary currency.
+ */
+const SUMMARY_KEY = 'zui-summary-currency';
+export function readSummaryCurrency(): string | undefined {
+  try {
+    return localStorage.getItem(SUMMARY_KEY) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+export function writeSummaryCurrency(code: string) {
+  try {
+    localStorage.setItem(SUMMARY_KEY, code);
+  } catch {
+    /* private mode: this visit only */
+  }
+}

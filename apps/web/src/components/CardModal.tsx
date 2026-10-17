@@ -1,5 +1,5 @@
 import { CheckCircleFilled } from '@ant-design/icons';
-import { Button, Checkbox, Col, Form, Input, InputNumber, Modal, Row, Segmented, Select, Space, Tag } from 'antd';
+import { Checkbox, Col, Form, Input, InputNumber, Modal, Row, Segmented, Select, Space, Tag } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
@@ -17,7 +17,6 @@ import {
   normalizePan,
   panInputState,
   parseExpiry,
-  type BinInfo,
   type CardBrand,
   type CardDto,
   type CardForm,
@@ -27,8 +26,7 @@ import {
   type LimitPeriod,
 } from '@z-ui/shared';
 import { patch, post } from '../api/client.ts';
-import { useAction, useConfig } from '../api/hooks.ts';
-import { flagOf, useBinLookup } from '../lib/bin.ts';
+import { useAction } from '../api/hooks.ts';
 import { cardLabel, useAccountOptions, useLookups } from '../lib/format.ts';
 import { BankCard } from './BankCard.tsx';
 import { CustomFieldInputs } from './CustomFields.tsx';
@@ -88,57 +86,6 @@ function ThemePicker({ value, onChange }: { value?: CardTheme; onChange?: (v: Ca
 }
 
 const twoDigits = (n: number) => String(n).padStart(2, '0');
-const FUNDING_TYPES = ['CREDIT', 'DEBIT', 'PREPAID', 'CHARGE CARD'];
-
-/** Correct the public BIN record by hand (issuer, scheme, type, level, country). */
-function BinEditor({ bin, initial, onApply, onCancel }: { bin: string; initial: BinInfo | null; onApply: (b: BinInfo) => void; onCancel: () => void }) {
-  const { t } = useTranslation();
-  const { data: cfg } = useConfig();
-  const [b, setB] = useState<BinInfo>(() => ({ ...initial, bin, source: 'manual' }));
-  const set = (k: keyof BinInfo, v: string | undefined) => setB((x) => ({ ...x, [k]: v || undefined }));
-  return (
-    <div className="bin-editor">
-      <Row gutter={8}>
-        <Col span={24}>
-          <Input size="small" addonBefore={t('bins.issuer')} value={b.issuer} maxLength={160} onChange={(e) => set('issuer', e.target.value)} />
-        </Col>
-        <Col span={8}>
-          <Input size="small" placeholder={t('bins.scheme')} value={b.scheme} maxLength={60} onChange={(e) => set('scheme', e.target.value.toUpperCase())} />
-        </Col>
-        <Col span={8}>
-          <Select size="small" allowClear placeholder={t('bins.type')} value={b.type} onChange={(v) => set('type', v)} options={FUNDING_TYPES.map((x) => ({ value: x, label: x }))} style={{ width: '100%' }} />
-        </Col>
-        <Col span={8}>
-          <Input size="small" placeholder={t('bins.level')} value={b.level} maxLength={80} onChange={(e) => set('level', e.target.value.toUpperCase())} />
-        </Col>
-        <Col span={24}>
-          <Select
-            size="small"
-            allowClear
-            showSearch={{ optionFilterProp: 'label' }}
-            placeholder={t('bins.country')}
-            value={b.country}
-            onChange={(code?: string) => {
-              const c = cfg?.countries.find((x) => x.code === code);
-              setB((x) => ({ ...x, country: code || undefined, countryName: c?.name }));
-            }}
-            options={(cfg?.countries ?? []).filter((c) => c.code !== 'ZZ').map((c) => ({ value: c.code, label: `${c.flag} ${c.name}` }))}
-            style={{ width: '100%' }}
-          />
-        </Col>
-      </Row>
-      <Space size={6} style={{ marginTop: 6 }}>
-        <Button size="small" type="primary" onClick={() => onApply({ ...b, bin, source: 'manual' })}>
-          {t('bins.apply')}
-        </Button>
-        <Button size="small" onClick={onCancel}>
-          {t('common.cancel')}
-        </Button>
-      </Space>
-    </div>
-  );
-}
-
 export function CardModal({
   open,
   editing,
@@ -187,19 +134,6 @@ export function CardModal({
     mode === 'full' && pan.digits ? pan.brand : (v?.brand ?? (v?.bin ? detectBrand(v.bin) : (editing?.brand ?? 'other')));
   const account = v?.accountId ? L.acc.get(v.accountId) : undefined;
   const expiry = parseExpiry(v?.expiry ?? '');
-  // Public BIN record (issuer, level, country) from the static lookup files.
-  const bin6 = mode === 'full' ? (pan.digits.length >= 6 ? pan.digits.slice(0, 6) : null) : mode === 'last4' ? (/^\d{6}$/.test(v?.bin ?? '') ? v!.bin! : null) : (editing?.bin ?? null);
-  const { data: library } = useBinLookup(bin6);
-  // Hand correction: undefined = untouched in this dialog, null = back to the public list.
-  const [manual, setManual] = useState<BinInfo | null | undefined>(undefined);
-  const [editingBin, setEditingBin] = useState(false);
-  useEffect(() => {
-    setManual(undefined);
-    setEditingBin(false);
-  }, [open, editing]);
-  const savedManual = editing?.binInfo?.source === 'manual' && editing.binInfo.bin === bin6 ? editing.binInfo : null;
-  const binInfo = manual !== undefined ? (manual && manual.bin === bin6 ? manual : (library ?? null)) : (savedManual ?? library ?? null);
-
   const parentOptions = useMemo(() => {
     const physical = L.cards.filter((c) => c.form === 'physical' && c.status !== 'closed' && c.id !== editing?.id);
     const sameAccount = physical.filter((c) => c.accountId === v?.accountId);
@@ -228,10 +162,6 @@ export function CardModal({
       note: f.note || null,
       extra: f.extra ?? {},
     };
-    // A hand correction is kept until replaced; otherwise the current public record is saved.
-    // (The server drops a stored record that no longer matches the BIN.)
-    if (manual !== undefined) body.binInfo = manual && manual.bin === bin6 ? manual : (library ?? null);
-    else if (!savedManual && library && library.bin === bin6) body.binInfo = library;
     if (f.panMode === 'full') body.pan = f.pan;
     if (f.panMode === 'last4') {
       Object.assign(body, { last4: f.last4, bin: f.bin || null, brand: f.brand ?? (f.bin ? detectBrand(f.bin) : 'other') });
@@ -272,44 +202,6 @@ export function CardModal({
           }}
         />
       </div>
-      {bin6 && !editingBin && (
-        <div className="bin-line muted">
-          {binInfo ? (
-            <>
-              {flagOf(binInfo.country)} {[binInfo.issuer, binInfo.scheme, binInfo.type, binInfo.level].filter(Boolean).join(' · ')}
-              {binInfo.countryName ? ` · ${binInfo.countryName}` : ''}{' '}
-              {binInfo.source === 'manual' ? (
-                <Tag color="green" style={{ marginInline: 4 }}>
-                  {t('bins.manual')}
-                </Tag>
-              ) : (
-                binInfo.seen && <span>· {t('bins.seen', { date: binInfo.seen })} </span>
-              )}
-            </>
-          ) : (
-            <span>{t('bins.notFound', { bin: bin6 })} </span>
-          )}
-          <Button type="link" size="small" style={{ padding: 0, height: 'auto' }} onClick={() => setEditingBin(true)}>
-            {t('bins.correct')}
-          </Button>
-          {binInfo?.source === 'manual' && library && (
-            <Button type="link" size="small" style={{ padding: '0 0 0 8px', height: 'auto' }} onClick={() => setManual(null)}>
-              {t('bins.useLibrary')}
-            </Button>
-          )}
-        </div>
-      )}
-      {bin6 && editingBin && (
-        <BinEditor
-          bin={bin6}
-          initial={binInfo}
-          onCancel={() => setEditingBin(false)}
-          onApply={(b) => {
-            setManual(b);
-            setEditingBin(false);
-          }}
-        />
-      )}
       <Form form={form} layout="vertical" requiredMark={false} onFinish={submit}>
         <Row gutter={12}>
           <Col span={14}>

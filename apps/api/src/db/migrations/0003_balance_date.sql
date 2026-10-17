@@ -1,0 +1,1 @@
+ALTER TABLE `account_currencies` ADD `balance_date` text;

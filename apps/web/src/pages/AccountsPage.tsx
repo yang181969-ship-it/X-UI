@@ -104,6 +104,8 @@ function InstitutionModal({ open, editing, onClose }: { open: boolean; editing: 
 interface CurrencyRow {
   currency: string;
   openingBalance: number;
+  /** End of this day = the balance above; null = every transaction counts. */
+  balanceDate?: Dayjs | null;
   includeInTotal: boolean;
 }
 
@@ -137,9 +139,14 @@ function CurrencyRows({ editing }: { editing: AccountDto | null }) {
                     options={cfg?.currencies.map((c) => ({ value: c.code, label: c.code, disabled: rows.some((r, j) => j !== i && r?.currency === c.code) }))}
                   />
                 </Form.Item>
-                <Form.Item name={[name, 'openingBalance']} style={{ marginBottom: 0, flex: 1, minWidth: 0 }}>
+                <Form.Item name={[name, 'openingBalance']} style={{ marginBottom: 0, flex: 1, minWidth: 110 }}>
                   <MoneyInput currency={cur ?? '—'} allowNegative />
                 </Form.Item>
+                <Tooltip title={t('account.balanceDateHint')}>
+                  <Form.Item name={[name, 'balanceDate']} style={{ marginBottom: 0, width: 132 }}>
+                    <DatePicker placeholder={t('account.allTransactions')} aria-label={t('account.balanceDate')} style={{ width: '100%' }} />
+                  </Form.Item>
+                </Tooltip>
                 <Tooltip title={t('account.includeInTotal')}>
                   <Form.Item name={[name, 'includeInTotal']} valuePropName="checked" style={{ marginBottom: 0 }}>
                     <Switch size="small" checkedChildren="Σ" unCheckedChildren="Σ" />
@@ -151,7 +158,7 @@ function CurrencyRows({ editing }: { editing: AccountDto | null }) {
               </div>
             );
           })}
-          <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add({ currency: undefined, openingBalance: 0, includeInTotal: true })}>
+          <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add({ currency: undefined, openingBalance: 0, balanceDate: dayjs(), includeInTotal: true })}>
             {t('account.addCurrency')}
           </Button>
         </div>
@@ -176,20 +183,31 @@ function AccountModal({ open, editing, institutionId, onClose }: { open: boolean
           ? {
               ...editing,
               openingDate: dayjs(editing.openingDate),
-              currencies: editing.currencies.map(({ currency, openingBalance, includeInTotal }) => ({ currency, openingBalance, includeInTotal })),
+              currencies: editing.currencies.map(({ currency, openingBalance, balanceDate, includeInTotal }) => ({
+                currency,
+                openingBalance,
+                balanceDate: balanceDate ? dayjs(balanceDate) : null,
+                includeInTotal,
+              })),
             }
           : {
               institutionId,
               type: 'checking',
-              currencies: [{ currency: cfg?.app.defaultCurrency ?? 'USD', openingBalance: 0, includeInTotal: true }],
-              openingDate: dayjs().startOf('month'),
+              currencies: [{ currency: cfg?.app.defaultCurrency ?? 'USD', openingBalance: 0, balanceDate: dayjs(), includeInTotal: true }],
+              openingDate: dayjs(),
               extra: {},
             },
       );
     }
   }, [open, editing, institutionId, form, cfg]);
   const save = useAction(async (v: AccountForm) => {
-    const body = { ...v, openingDate: v.openingDate!.format('YYYY-MM-DD'), creditLimit: v.type === 'credit' ? (v.creditLimit ?? null) : null, numberLast4: v.numberLast4 || null };
+    const body = {
+      ...v,
+      openingDate: (v.openingDate ?? dayjs()).format('YYYY-MM-DD'),
+      currencies: v.currencies?.map((c) => ({ ...c, balanceDate: c.balanceDate ? c.balanceDate.format('YYYY-MM-DD') : null })),
+      creditLimit: v.type === 'credit' ? (v.creditLimit ?? null) : null,
+      numberLast4: v.numberLast4 || null,
+    };
     if (editing) await patch(`/accounts/${editing.id}`, body);
     else await post('/accounts', body);
     onClose();
@@ -215,20 +233,19 @@ function AccountModal({ open, editing, institutionId, onClose }: { open: boolean
         <Form.Item label={t('account.currencies')} extra={t('account.openingBalanceHint')} required>
           <CurrencyRows editing={editing} />
         </Form.Item>
+        {/* Kept for the record only; each currency's balance date decides what counts. */}
+        <Form.Item name="openingDate" hidden>
+          <DatePicker />
+        </Form.Item>
         <Row gutter={12}>
-          <Col span={type === 'credit' ? 8 : 12}>
-            <Form.Item name="openingDate" label={t('account.openingDate')} rules={[{ required: true }]}>
-              <DatePicker style={{ width: '100%' }} allowClear={false} />
-            </Form.Item>
-          </Col>
           {type === 'credit' && (
-            <Col span={9}>
+            <Col span={12}>
               <Form.Item name="creditLimit" label={t('account.creditLimit')}>
                 <MoneyInput currency={primary} />
               </Form.Item>
             </Col>
           )}
-          <Col span={type === 'credit' ? 7 : 12}>
+          <Col span={12}>
             <Form.Item name="numberLast4" label={t('account.numberLast4')} rules={[{ pattern: /^\d{4}$/ }]}>
               <Input maxLength={4} inputMode="numeric" />
             </Form.Item>
@@ -261,17 +278,32 @@ export function Balances({ account, size = 'md' }: { account: AccountDto; size?:
 
 // ---------------------------------------------------------------- account drawer
 
-function AccountTransactions({ accountId, onEdit }: { accountId: string; onEdit: (tx: TransactionDto) => void }) {
+function AccountTransactions({ account, onEdit }: { account: AccountDto; onEdit: (tx: TransactionDto) => void }) {
   const [page, setPage] = useState(1);
   // The account's own ledger lists everything (stock cash legs, hidden spending) so the balance adds up.
+  const { t } = useTranslation();
+  const accountId = account.id;
   const { data, isLoading } = useTransactions({ accountId, page, pageSize: 15, hidden: '1', trades: '1' });
+  // On or before the currency's balance date: already in the synced balance, not counted again.
+  const counted = (tx: TransactionDto) => {
+    const d = account.currencies.find((c) => c.currency === tx.currency)?.balanceDate;
+    return !d || tx.occurredAt > d;
+  };
   if (isLoading) return <Skeleton active />;
   if (!data?.items.length) return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />;
   return (
     <>
-      {data.items.map((tx) => (
-        <TxRow key={tx.id} tx={tx} onClick={() => onEdit(tx)} />
-      ))}
+      {data.items.map((tx) =>
+        counted(tx) ? (
+          <TxRow key={tx.id} tx={tx} onClick={() => onEdit(tx)} />
+        ) : (
+          <Tooltip key={tx.id} title={t('account.beforeBalanceDate')} placement="left">
+            <div className="tx-not-counted">
+              <TxRow tx={tx} onClick={() => onEdit(tx)} />
+            </div>
+          </Tooltip>
+        ),
+      )}
       {data.total > 15 && <Pagination size="small" style={{ marginTop: 12, textAlign: 'center' }} current={page} total={data.total} pageSize={15} onChange={setPage} showSizeChanger={false} />}
     </>
   );
@@ -364,7 +396,7 @@ function AccountDrawer({ account, onClose, onEdit }: { account: AccountDto | nul
           {
             key: 'tx',
             label: t('nav.transactions'),
-            children: <AccountTransactions accountId={account.id} onEdit={(e) => setTx({ open: true, editing: e })} />,
+            children: <AccountTransactions account={account} onEdit={(e) => setTx({ open: true, editing: e })} />,
           },
           {
             key: 'cards',
@@ -419,7 +451,19 @@ function AccountDrawer({ account, onClose, onEdit }: { account: AccountDto | nul
                       </Space>
                     ),
                   },
-                  { key: 'od', label: t('account.openingDate'), children: account.openingDate },
+                  {
+                    key: 'bd',
+                    label: t('account.balanceDate'),
+                    children: (
+                      <Space orientation="vertical" size={0}>
+                        {account.currencies.map((c) => (
+                          <span key={c.currency}>
+                            {c.currency} · {c.balanceDate ?? <span className="muted">{t('account.allTransactions')}</span>}
+                          </span>
+                        ))}
+                      </Space>
+                    ),
+                  },
                   { key: 'no', label: t('account.numberLast4'), children: account.numberLast4 ? `•••• ${account.numberLast4}` : '—' },
                   { key: 'n', label: t('common.note'), children: account.note || '—' },
                 ]}

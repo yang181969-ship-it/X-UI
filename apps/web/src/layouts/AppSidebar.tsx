@@ -7,7 +7,6 @@ import {
   DashboardOutlined,
   FundOutlined,
   GlobalOutlined,
-  IdcardOutlined,
   LogoutOutlined,
   MenuOutlined,
   PushpinFilled,
@@ -65,7 +64,6 @@ export function AppSidebar() {
       { key: '/invest', icon: <FundOutlined />, label: t('nav.invest') },
       { key: '/stats', icon: <BarChartOutlined />, label: t('nav.stats') },
       { key: '/fx', icon: <GlobalOutlined />, label: t('nav.fx') },
-      { key: '/bins', icon: <IdcardOutlined />, label: t('nav.bins') },
     ],
     [t],
   );

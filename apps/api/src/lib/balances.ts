@@ -5,8 +5,9 @@ import { accountCurrencies, transactions } from '../db/schema.ts';
 
 /**
  * account_currencies.balance / tx_count are a cache of
- *   opening_balance + Σ transactions.amount   and   count(transactions)
- * per (account, currency). Every write that inserts, changes or deletes transactions appends
+ *   opening_balance + Σ transactions.amount after balance_date   and   count(transactions)
+ * per (account, currency). The opening balance is the balance at the end of balance_date, so
+ * transactions on or before that day are already in it (no balance_date: all of them count). Every write that inserts, changes or deletes transactions appends
  * these statements to the same batch, so the cache is updated atomically with the data and
  * reading balances never scans the transactions table (D1 counts rows read per day).
  */
@@ -16,7 +17,7 @@ export interface Pair {
   currency: string;
 }
 
-const balanceSql = sql`${accountCurrencies.openingBalance} + coalesce((select sum(t.amount) from ${transactions} t where t.account_id = ${accountCurrencies.accountId} and t.currency = ${accountCurrencies.currency}), 0)`;
+const balanceSql = sql`${accountCurrencies.openingBalance} + coalesce((select sum(t.amount) from ${transactions} t where t.account_id = ${accountCurrencies.accountId} and t.currency = ${accountCurrencies.currency} and (${accountCurrencies.balanceDate} is null or t.occurred_at > ${accountCurrencies.balanceDate})), 0)`;
 const countSql = sql`(select count(*) from ${transactions} t where t.account_id = ${accountCurrencies.accountId} and t.currency = ${accountCurrencies.currency})`;
 
 /** Recompute the given (account, currency) pairs (duplicates are ignored). */

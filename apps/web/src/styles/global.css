@@ -1271,3 +1271,10 @@ html[data-theme='light'] .login-blob {
   text-overflow: ellipsis;
   min-width: 0;
 }
+
+.currency-row {
+  flex-wrap: wrap;
+}
+.tx-not-counted {
+  opacity: 0.5;
+}

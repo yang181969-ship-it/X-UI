@@ -196,6 +196,11 @@ export const accountCurrencies = sqliteTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     currency: text('currency').notNull(),
     openingBalance: integer('opening_balance').notNull().default(0),
+    /**
+     * Date the opening balance was synced (the balance at the end of that day): only transactions
+     * dated after it change the balance. Null = every transaction counts.
+     */
+    balanceDate: text('balance_date'),
     /** Counted in the dashboard totals (net worth). */
     includeInTotal: bool('include_in_total').notNull().default(true),
     /**

@@ -8,7 +8,7 @@ import {
   type DashboardCountryNode,
   type DashboardDto,
 } from '@z-ui/shared';
-import { currencyDecimals } from '@z-ui/shared';
+import { currencyDecimals, summaryCurrency } from '@z-ui/shared';
 import { accounts, cards, fxRates, institutions, transactions } from '../db/schema.ts';
 import type { AppBindings } from '../env.ts';
 import { listAccountsWithBalance } from './accounts.ts';
@@ -85,7 +85,7 @@ export const dashboardRoutes = new Hono<AppBindings>().get('/', async (c) => {
 
   // Net worth in the chosen currency (default: the app's), using the last synced exchange rates.
   const cfg = c.var.deps.config.get();
-  const base = q.currency && cfg.currencies.some((x) => x.code === q.currency) ? q.currency : cfg.app.defaultCurrency;
+  const base = q.currency && cfg.currencies.some((x) => x.code === q.currency) ? q.currency : summaryCurrency(cfg);
   const perUsd = new Map(rates.map((r) => [r.currency, r.perUsd]));
   const decimals = (code: string) => currencyDecimals(cfg, code);
   const visible = [...totals.values()].filter((x) => x.assets !== 0 || x.liabilities !== 0);

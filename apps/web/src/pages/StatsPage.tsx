@@ -1,15 +1,19 @@
 import { BarChartOutlined, TableOutlined } from '@ant-design/icons';
-import { Card, Col, DatePicker, Empty, Row, Segmented, Select, Space, Statistic, Switch, Table, Tag } from 'antd';
+import { Alert, Card, Col, DatePicker, Empty, Row, Segmented, Select, Space, Statistic, Switch, Table, Tag } from 'antd';
 import dayjs, { type Dayjs } from 'dayjs';
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Link } from 'react-router';
 import { fromMinor, INVEST_CATEGORY } from '@z-ui/shared';
 import { useStats } from '../api/hooks.ts';
 import { GroupedColumns, Legend, RankBars, type RankRow, type Series } from '../components/Charts.tsx';
 import { PageTop } from '../layouts/PanelLayout.tsx';
-import { useDecimals, useLocale, useLookups, useMoney } from '../lib/format.ts';
+import { readSummaryCurrency, useDecimals, useLocale, useLookups, useMoney } from '../lib/format.ts';
 
 const INVEST_KEY = 'zui-stats-invest';
+const ALL = '__all';
+
+
 
 type Preset = 'thisMonth' | 'last3' | 'last12' | 'thisYear' | 'lastYear';
 const PRESETS: Preset[] = ['thisMonth', 'last3', 'last12', 'thisYear', 'lastYear'];
@@ -63,10 +67,12 @@ export function StatsPage() {
     from: range[0].format('YYYY-MM-DD'),
     to: range[1].format('YYYY-MM-DD'),
     currency,
+    convertTo: readSummaryCurrency(),
     institutionId,
     invest: withInvest ? undefined : '0',
   });
-  const cur = data?.currency ?? currency ?? null;
+  // One currency, or (default) everything converted to one.
+  const cur = data?.currency ?? data?.convertedTo ?? currency ?? null;
   const stale = isFetching && isPlaceholderData ? 'is-stale' : '';
 
   const fmt = (n: number) => (cur ? money(n, cur) : String(n));
@@ -157,7 +163,14 @@ export function StatsPage() {
         options={L.institutions.map((i) => ({ value: i.id, label: i.name }))}
       />
       {(data?.currencies.length ?? 0) > 1 && (
-        <Segmented value={cur ?? ''} onChange={(v) => setCurrency(v as string)} options={data!.currencies.map((c) => ({ value: c, label: c }))} />
+        <Segmented
+          value={currency ?? ALL}
+          onChange={(v) => setCurrency(v === ALL ? undefined : (v as string))}
+          options={[
+            { value: ALL, label: t('stats.allCurrencies', { currency: data!.convertedTo ?? '' }) },
+            ...data!.currencies.map((c) => ({ value: c, label: c })),
+          ]}
+        />
       )}
       <label className="muted switch-label">
         <Switch size="small" checked={withInvest} onChange={toggleInvest} />
@@ -170,7 +183,15 @@ export function StatsPage() {
     <>
       <PageTop title={t('stats.title')} />
       {filters}
-      {(data?.currencies.length ?? 0) > 1 && <div className="muted" style={{ fontSize: 12, margin: '-4px 0 12px' }}>{t('stats.noFx')}</div>}
+      {(data?.missing.length ?? 0) > 0 && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message={t('stats.missingRates', { list: data!.missing.join(', ') })}
+          action={<Link to="/fx">{t('nav.fx')}</Link>}
+        />
+      )}
 
       {empty ? (
         <Card>

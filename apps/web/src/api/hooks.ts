@@ -66,7 +66,7 @@ export const useReminders = () =>
 export const useOccurrences = (from?: string, to?: string) =>
   useQuery({ queryKey: ['occurrences', from ?? '', to ?? ''], queryFn: () => get<BillOccurrenceDto[]>(`/bills/occurrences${qs({ from, to })}`) });
 
-export const useStats = (q: { from: string; to: string; currency?: string; institutionId?: string; invest?: '0' }) =>
+export const useStats = (q: { from: string; to: string; currency?: string; convertTo?: string; institutionId?: string; invest?: '0' }) =>
   useQuery({ queryKey: ['stats', q], queryFn: () => get<StatsDto>(`/stats${qs(q)}`), placeholderData: keepPreviousData });
 
 export interface TxFilters {

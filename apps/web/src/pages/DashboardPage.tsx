@@ -12,9 +12,7 @@ import { ReminderList } from '../components/ReminderBell.tsx';
 import { TransactionModal } from '../components/TransactionModal.tsx';
 import { TxRow } from '../components/TxRow.tsx';
 import { PageTop } from '../layouts/PanelLayout.tsx';
-import { colorFor, initials, useCountry, useMoney, visibleBalances } from '../lib/format.ts';
-
-const CONVERT_KEY = 'zui-dash-currency';
+import { colorFor, initials, readSummaryCurrency, useCountry, useMoney, visibleBalances, writeSummaryCurrency } from '../lib/format.ts';
 
 const stagger = {
   hidden: {},
@@ -30,20 +28,10 @@ export function DashboardPage() {
   const navigate = useNavigate();
   const { data: me } = useMe();
   // Currency the net worth is converted to; remembered per browser.
-  const [convCurrency, setConvCurrency] = useState<string | undefined>(() => {
-    try {
-      return localStorage.getItem(CONVERT_KEY) ?? undefined;
-    } catch {
-      return undefined;
-    }
-  });
+  const [convCurrency, setConvCurrency] = useState<string | undefined>(readSummaryCurrency);
   const pickCurrency = (code: string) => {
     setConvCurrency(code);
-    try {
-      localStorage.setItem(CONVERT_KEY, code);
-    } catch {
-      /* private mode: just this visit */
-    }
+    writeSummaryCurrency(code);
   };
   const { data, isLoading } = useDashboard(convCurrency);
   const { data: reminders = [] } = useReminders();

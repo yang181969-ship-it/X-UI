@@ -67,6 +67,7 @@ export async function listAccountsWithBalance(db: DB, userId: string, extra?: SQ
       .map((c) => ({
         currency: c.currency,
         openingBalance: c.openingBalance,
+        balanceDate: c.balanceDate,
         includeInTotal: c.includeInTotal,
         balance: c.balance + (investment && c.currency === 'USD' ? investment.marketValue : 0),
         transactionCount: c.txCount,
@@ -136,7 +137,7 @@ export const accountRoutes = new Hono<AppBindings>()
     };
     await runBatch(db, [
       db.insert(accounts).values(row),
-      ...chunkRows(input.currencies.map((cur, i) => ({ ...cur, accountId: row.id, userId, balance: cur.openingBalance, txCount: 0, sort: i }))).map((part) =>
+      ...chunkRows(input.currencies.map((cur, i) => ({ ...cur, balanceDate: cur.balanceDate ?? null, accountId: row.id, userId, balance: cur.openingBalance, txCount: 0, sort: i }))).map((part) =>
         db.insert(accountCurrencies).values(part),
       ),
     ]);
@@ -166,7 +167,7 @@ export const accountRoutes = new Hono<AppBindings>()
       if (blocked.length) fail(409, `cannot remove ${blocked.join(', ')}: it has transactions`, 'CURRENCY_IN_USE', blocked);
       ops.push(
         db.delete(accountCurrencies).where(eq(accountCurrencies.accountId, cur.id)),
-        ...chunkRows(currencies.map((x, i) => ({ ...x, accountId: cur.id, userId, sort: i }))).map((part) => db.insert(accountCurrencies).values(part)),
+        ...chunkRows(currencies.map((x, i) => ({ ...x, balanceDate: x.balanceDate ?? null, accountId: cur.id, userId, sort: i }))).map((part) => db.insert(accountCurrencies).values(part)),
         ...recalcAccountOps(db, cur.id),
       );
     }

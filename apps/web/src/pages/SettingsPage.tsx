@@ -451,6 +451,14 @@ function CurrenciesTab({ draft, setDraft }: { draft: AppConfig; setDraft: (c: Ap
                 options={draft.currencies.map((c) => ({ value: c.code, label: c.code }))}
               />
             </Form.Item>
+            <Form.Item label={t('settings.summaryCurrency')} tooltip={t('settings.summaryCurrencyHint')}>
+              <Select
+                style={{ width: 120 }}
+                value={draft.app.summaryCurrency}
+                onChange={(v) => setDraft({ ...draft, app: { ...draft.app, summaryCurrency: v } })}
+                options={draft.currencies.map((c) => ({ value: c.code, label: c.code }))}
+              />
+            </Form.Item>
           </Form>
           <ListEditor
             items={draft.currencies}
