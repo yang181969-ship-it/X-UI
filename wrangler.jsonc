@@ -22,7 +22,7 @@
 		{
 			"binding": "DB",
 			"database_name": "z-ui",
-			"database_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxx",
+			"database_id": "a61eb056-8696-4d17-b1f1-de5edc5b94b0",
 			"migrations_dir": "apps/api/src/db/migrations"
 		}
 	],
@@ -40,7 +40,7 @@
 	// TODO: your domain. A custom domain route makes Cloudflare create the DNS record + certificate.
 	"routes": [
 		{
-			"pattern": "z-ui.example.com",
+			"pattern": "z-ui.elainayao.com",
 			"custom_domain": true
 		}
 	],
@@ -49,8 +49,8 @@
 	"preview_urls": false,
 	"vars": {
 		// TODO: the same domain (WebAuthn relying party id + allowed browser origin).
-		"RP_ID": "z-ui.example.com",
-		"ORIGINS": "https://z-ui.example.com",
+		"RP_ID": "z-ui.elainayao.com",
+		"ORIGINS": "https://z-ui.elainayao.com",
 		"RP_NAME": "Z-UI",
 		"COOKIE_SECURE": "true",
 		"TRUST_PROXY": "true",

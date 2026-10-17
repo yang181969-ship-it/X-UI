@@ -7,6 +7,9 @@ coverage/
 .env
 .env.*
 !.env.example
+wrangler.jsonc
+wrangler.jsonc.*
+!wrangler.jsonc.example
 data/
 *.db
 *.db-journal

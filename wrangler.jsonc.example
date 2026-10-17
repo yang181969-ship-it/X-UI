@@ -1,0 +1,65 @@
+// Cloudflare Workers deployment (free plan). See README → "部署到 Cloudflare".
+// Fill in the three values marked TODO, then: npm run cf:deploy
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "z-ui",
+	"main": "apps/api/src/worker.ts",
+	"compatibility_date": "2026-10-01",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	// Only /api/* runs the Worker. Everything else (the app, /bin/*.json lookup files) is a static
+	// asset: free, unlimited, and not counted against the 100k Worker requests per day.
+	"assets": {
+		"directory": "./apps/web/dist",
+		"binding": "ASSETS",
+		"not_found_handling": "single-page-application",
+		"run_worker_first": [
+			"/api/*"
+		]
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "z-ui",
+			"database_id": "xxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxx",
+			"migrations_dir": "apps/api/src/db/migrations"
+		}
+	],
+	// Per-IP throttle for login / passkey / setup endpoints (no D1 writes needed).
+	"ratelimits": [
+		{
+			"name": "AUTH_LIMITER",
+			"namespace_id": "1001",
+			"simple": {
+				"limit": 20,
+				"period": 60
+			}
+		}
+	],
+	// TODO: your domain. A custom domain route makes Cloudflare create the DNS record + certificate.
+	"routes": [
+		{
+			"pattern": "z-ui.example.com",
+			"custom_domain": true
+		}
+	],
+	// The *.workers.dev URL stays off so the only entrance is your (Access-protected) domain.
+	"workers_dev": false,
+	"preview_urls": false,
+	"vars": {
+		// TODO: the same domain (WebAuthn relying party id + allowed browser origin).
+		"RP_ID": "z-ui.example.com",
+		"ORIGINS": "https://z-ui.example.com",
+		"RP_NAME": "Z-UI",
+		"COOKIE_SECURE": "true",
+		"TRUST_PROXY": "true",
+		// PBKDF2 cost for new password hashes: 50k ≈ 3–4 ms, within the free plan's 10 ms CPU.
+		"PASSWORD_ITERATIONS": "50000"
+	},
+	// Secrets (never in this file): npx wrangler secret put APP_ENC_KEY | SESSION_PEPPER | SETUP_TOKEN
+	// Optional: FINNHUB_API_KEY (stock quotes; Yahoo Finance is used without it).
+	"observability": {
+		"enabled": false
+	}
+}
