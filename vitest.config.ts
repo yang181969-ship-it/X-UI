@@ -5,5 +5,7 @@ export default defineConfig({
     include: ['packages/*/test/**/*.test.ts', 'apps/api/test/**/*.test.ts'],
     environment: 'node',
     testTimeout: 30_000,
+    // removeDbDir (apps/api/test/helpers.ts) forces a GC so libsql releases closed database files.
+    execArgv: ['--expose-gc'],
   },
 });

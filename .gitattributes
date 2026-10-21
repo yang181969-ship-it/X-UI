@@ -1,0 +1,2 @@
+# The config file must match serializeConfig() byte for byte (LF), whatever core.autocrlf says.
+config/*.json text eol=lf

@@ -45,11 +45,23 @@ export async function openLibsql(url: string, opts: { d1Limits?: boolean; onCall
   // One connection: per-connection PRAGMAs (foreign_keys) stay in effect, and SQLite only
   // has a single writer anyway — the same model as D1.
   const raw = createClient({ url, concurrency: 1 });
-  await raw.execute('PRAGMA foreign_keys = ON');
-  await raw.execute('PRAGMA journal_mode = WAL');
-  await raw.execute('PRAGMA busy_timeout = 5000');
-  const client = opts.d1Limits ? withD1Limits(raw, opts.onCall) : raw;
-  const db = drizzle(client, { schema });
-  await migrate(db, { migrationsFolder: MIGRATIONS_DIR });
-  return db;
+  try {
+    await raw.execute('PRAGMA foreign_keys = ON');
+    await raw.execute('PRAGMA journal_mode = WAL');
+    await raw.execute('PRAGMA busy_timeout = 5000');
+    const client = opts.d1Limits ? withD1Limits(raw, opts.onCall) : raw;
+    const db = drizzle(client, { schema });
+    await migrate(db, { migrationsFolder: MIGRATIONS_DIR });
+    return db;
+  } catch (err) {
+    // Nobody else holds the client yet: close it so a failed start doesn't keep the file open.
+    try {
+      raw.close();
+    } catch (closeErr) {
+      throw new AggregateError([err, closeErr], `opening the database failed, then closing it failed too: ${errorMessage(err)}`, { cause: err });
+    }
+    throw err;
+  }
 }
+
+const errorMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));

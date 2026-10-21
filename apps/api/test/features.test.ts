@@ -1,12 +1,11 @@
 import { createClient } from '@libsql/client';
 import { drizzle } from 'drizzle-orm/libsql';
 import { migrate } from 'drizzle-orm/libsql/migrator';
-import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MIGRATIONS_DIR, openLibsql } from '../src/db/client.ts';
-import { client, login, makeUser, setup, type TestEnv } from './helpers.ts';
+import { client, dbClient, login, makeUser, setup, withDbDir, type TestEnv } from './helpers.ts';
 
 let t: TestEnv;
 type C = ReturnType<typeof client>;
@@ -280,9 +279,8 @@ describe('statistics', () => {
 });
 
 describe('migration 0001', () => {
-  it('carries single-currency data into the multi-currency schema', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'zui-mig-'));
-    try {
+  it('carries single-currency data into the multi-currency schema', () =>
+    withDbDir('zui-mig-', async (dir, track) => {
       // A migrations folder containing only 0000 → a database exactly at the old schema.
       const only0000 = join(dir, 'migrations');
       mkdirSync(join(only0000, 'meta'), { recursive: true });
@@ -293,7 +291,7 @@ describe('migration 0001', () => {
       copyFileSync(join(MIGRATIONS_DIR, first), join(only0000, first));
 
       const url = `file:${join(dir, 'old.db')}`;
-      const raw = createClient({ url });
+      const raw = track(createClient({ url }));
       await migrate(drizzle(raw), { migrationsFolder: only0000 });
       await raw.executeMultiple(`
         INSERT INTO users VALUES ('u1','alice','Alice','member','active',NULL,NULL,NULL,0,NULL,'w',0,0);
@@ -307,8 +305,8 @@ describe('migration 0001', () => {
       `);
       raw.close();
 
-      await openLibsql(url); // applies 0001
-      const check = createClient({ url });
+      track(dbClient(await openLibsql(url))); // applies 0001
+      const check = track(createClient({ url }));
       const q = async (sqlText: string) => (await check.execute(sqlText)).rows;
       expect(await q('SELECT account_id, currency, opening_balance, include_in_total FROM account_currencies')).toEqual([
         expect.objectContaining({ account_id: 'a1', currency: 'HKD', opening_balance: 12345, include_in_total: 1 }),
@@ -319,11 +317,7 @@ describe('migration 0001', () => {
       expect(await q('SELECT id FROM bill_occurrences')).toHaveLength(1); // recreating bills kept its occurrences
       expect((await q('SELECT form, status, single_use FROM cards'))[0]).toMatchObject({ form: 'physical', status: 'active', single_use: 0 });
       expect((await q('PRAGMA table_info(accounts)')).map((r) => r['name'])).not.toContain('opening_balance');
-      check.close();
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
+    }));
 });
 
 // ---------------------------------------------------------------- markets (network mocked)
@@ -528,9 +522,8 @@ describe('US stocks', () => {
 });
 
 describe('migration 0002', () => {
-  it('records the old brokerage account as the cash account of existing trades', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'zui-mig-'));
-    try {
+  it('records the old brokerage account as the cash account of existing trades', () =>
+    withDbDir('zui-mig-', async (dir, track) => {
       const old = join(dir, 'migrations');
       mkdirSync(join(old, 'meta'), { recursive: true });
       const journal = JSON.parse(readFileSync(join(MIGRATIONS_DIR, 'meta/_journal.json'), 'utf8'));
@@ -539,7 +532,7 @@ describe('migration 0002', () => {
       for (const f of readdirSync(MIGRATIONS_DIR).filter((f) => /^000[01]_/.test(f))) copyFileSync(join(MIGRATIONS_DIR, f), join(old, f));
 
       const url = `file:${join(dir, 'old.db')}`;
-      const raw = createClient({ url });
+      const raw = track(createClient({ url }));
       await migrate(drizzle(raw), { migrationsFolder: old });
       await raw.executeMultiple(`
         INSERT INTO users (id, username, display_name, role, status, webauthn_user_id, totp_enabled, created_at, updated_at) VALUES ('u1','alice','Alice','admin','active','w',0,0,0);
@@ -555,21 +548,18 @@ describe('migration 0002', () => {
       raw.close();
 
       const db = await openLibsql(url); // applies 0002
-      const check = createClient({ url });
+      track(dbClient(db));
+      const check = track(createClient({ url }));
       expect((await check.execute('SELECT id, account_id, cash_account_id FROM trades ORDER BY id')).rows).toEqual([
         expect.objectContaining({ id: 'tr1', account_id: 'a1', cash_account_id: 'a1' }),
         expect.objectContaining({ id: 'tr2', account_id: 'a1', cash_account_id: null }),
       ]);
-      check.close();
       // The old brokerage account keeps its cash and now also shows the shares it holds.
       const { listAccountsWithBalance } = await import('../src/routes/accounts.ts');
       const [acc] = await listAccountsWithBalance(db, 'u1');
       expect(acc!.currencies[0]!.balance).toBe(70000 + 40000);
       expect(acc!.investment).toMatchObject({ marketValue: 40000, positions: 2, unpriced: 1 });
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
+    }));
 });
 
 describe('credit limits', () => {

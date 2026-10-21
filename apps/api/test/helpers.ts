@@ -1,13 +1,14 @@
 import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { Client } from '@libsql/client';
 import { eq } from 'drizzle-orm';
 import { appConfigSchema, type AppConfig, type Role } from '@z-ui/shared';
 import { createApp } from '../src/app.ts';
 import { currentTotp, generateTotpSecret } from '../src/auth/totp.ts';
 import { createUser, regenerateRecoveryCodes } from '../src/auth/users.ts';
 import { MemoryConfigStore } from '../src/config/store.ts';
-import { openLibsql } from '../src/db/client.ts';
+import { openLibsql, type DB } from '../src/db/client.ts';
 import { users } from '../src/db/schema.ts';
 import type { AppEnv, Deps } from '../src/env.ts';
 import { randomBytes } from '../src/lib/crypto.ts';
@@ -21,11 +22,97 @@ export function repoConfig(): AppConfig {
   return appConfigSchema.parse(JSON.parse(readFileSync(new URL('../../../config/app.config.json', import.meta.url), 'utf8')));
 }
 
+/** The libsql client behind a handle from openLibsql() (drizzle() sets $client; the DB type omits it). */
+export const dbClient = (db: DB) => (db as DB & { $client: Client }).$client;
+
+const errorMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/** Attempts at deleting a database directory that Windows still reports as in use. */
+export const RM_ATTEMPTS = 5;
+
+/**
+ * Close every connection, then delete the directory holding their database files.
+ * Windows can't delete a file that is still open, and libsql only releases the file once the
+ * prepared statements of a closed connection are garbage-collected — hence the forced GC
+ * (vitest.config.ts runs the workers with --expose-gc) and a few short retries.
+ * Closing a client twice is harmless. Every failure is reported, none stops the other steps.
+ */
+export async function removeDbDir(dir: string, clients: Client[] = []) {
+  const errors: unknown[] = [];
+  for (const c of new Set(clients)) {
+    try {
+      c.close();
+    } catch (e) {
+      errors.push(e);
+    }
+  }
+  for (let attempt = 1; ; attempt++) {
+    for (let i = 0; i < 2; i++) {
+      globalThis.gc?.();
+      await new Promise((r) => setImmediate(r)); // let native finalizers run
+    }
+    try {
+      rmSync(dir, { recursive: true, force: true });
+      break;
+    } catch (e) {
+      const busy = ['EBUSY', 'EPERM'].includes((e as NodeJS.ErrnoException).code ?? '');
+      if (busy && attempt < RM_ATTEMPTS) {
+        await new Promise((r) => setTimeout(r, 20 * attempt));
+        continue;
+      }
+      if (busy && !globalThis.gc) errors.push(new Error(`${dir} is still in use; run the tests with --expose-gc so libsql releases closed files`, { cause: e }));
+      else errors.push(e);
+      break;
+    }
+  }
+  if (errors.length === 1) throw errors[0];
+  if (errors.length) throw new AggregateError(errors, `cleaning up ${dir} failed`);
+}
+
+/** Rethrow `err` after running `cleanup`; if that fails too, throw both, `err` first. */
+export async function rethrowAfter(err: unknown, cleanup: () => Promise<void>): Promise<never> {
+  try {
+    await cleanup();
+  } catch (cleanupErr) {
+    throw new AggregateError([err, cleanupErr], `${errorMessage(err)} (cleanup failed too: ${errorMessage(cleanupErr)})`, { cause: err });
+  }
+  throw err;
+}
+
+/**
+ * Run `body` with a fresh temporary directory, then close every client it registered with
+ * `track` and delete the directory — whether `body` succeeded or not. Register a client as
+ * soon as it is created, so a failure right after still gets it closed.
+ */
+export async function withDbDir<T>(prefix: string, body: (dir: string, track: <C extends Client>(c: C) => C) => Promise<T>): Promise<T> {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  const clients: Client[] = [];
+  let result: T;
+  try {
+    result = await body(dir, (c) => (clients.push(c), c));
+  } catch (err) {
+    return rethrowAfter(err, () => removeDbDir(dir, clients));
+  }
+  await removeDbDir(dir, clients);
+  return result;
+}
+
 export async function setup(config: AppConfig = repoConfig()) {
   const dir = mkdtempSync(join(tmpdir(), 'zui-test-'));
+  const clients: Client[] = [];
+  try {
+    return await setupIn(dir, config, clients);
+  } catch (err) {
+    // If openLibsql() itself failed it has already closed its client; anything later finds it in `clients`.
+    return rethrowAfter(err, () => removeDbDir(dir, clients));
+  }
+}
+
+async function setupIn(dir: string, config: AppConfig, clients: Client[]) {
   // Subrequests (D1 calls + outgoing fetches) made by the API request currently running.
   const budget = { used: 0, peak: 0 };
   const db = await openLibsql(`file:${join(dir, 'test.db')}`, { d1Limits: true, onCall: () => budget.used++ });
+  clients.push(dbClient(db));
   const env: AppEnv = {
     APP_ENC_KEY: bytesToBase64Url(randomBytes(32)),
     SESSION_PEPPER: 'test-pepper',
@@ -50,11 +137,11 @@ export async function setup(config: AppConfig = repoConfig()) {
     budget,
     setIp: (v: string) => (ip = v),
     advance: (ms: number) => (clock.t += ms),
-    cleanup: () => rmSync(dir, { recursive: true, force: true }),
+    cleanup: () => removeDbDir(dir, [dbClient(db)]),
   };
 }
 
-export type TestEnv = Awaited<ReturnType<typeof setup>>;
+export type TestEnv = Awaited<ReturnType<typeof setupIn>>;
 
 /** Fetch wrapper with a cookie jar and the headers a real browser page would send. */
 export function client(t: TestEnv) {
