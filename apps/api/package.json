@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch --clear-screen=false src/node.ts",
+    "dev": "node --watch --watch-preserve-output --import tsx src/node.ts",
     "start": "NODE_ENV=production tsx src/node.ts",
     "create-admin": "tsx src/scripts/create-admin.ts",
     "db:generate": "drizzle-kit generate",
