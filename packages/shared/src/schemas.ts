@@ -10,6 +10,7 @@ import {
   PAST_POLICIES,
   ROLES,
   TRANSACTION_TYPES,
+  TX_FLOWS,
   VERIFICATION_STATUSES,
 } from './enums.ts';
 import { RECURRENCE_FREQS } from './recurrence.ts';
@@ -308,6 +309,12 @@ export const transactionQuerySchema = z.object({
   hidden: z.enum(['0', '1']).optional(),
   /** "1": include stock-trade cash legs (left out unless filtering by that type). */
   trades: z.enum(['0', '1']).optional(),
+  /**
+   * View: "outflow" keeps only money leaving an account (see OUTFLOW_TYPES; no income/expense sums
+   * are returned), "all" lists every type including stock-trade cash legs. Omitted: the original
+   * behaviour (stock-trade cash legs only with `trades=1` or `type=trade`). `trades` is ignored when set.
+   */
+  flow: z.enum(TX_FLOWS).optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(200).default(50),
 });

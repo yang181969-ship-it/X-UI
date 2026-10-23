@@ -305,12 +305,12 @@ test('records US stocks in an investment account, paid from Checking', async () 
   await expect(brokerage).toContainText('$400.00');
   await expect(brokerage).toContainText('持仓市值');
 
-  // The cash legs move Checking's money but stay out of the transactions list…
+  // The cash legs move Checking's money: the default outflow view lists the purchase payments…
   await page.goto('/transactions');
   await expect(page.locator('.ant-table-row').filter({ hasText: '午饭' })).toBeVisible();
-  await expect(page.locator('.ant-table-row').filter({ hasText: 'BUY AAPL' })).toHaveCount(0);
-  // …unless filtered by type, where they are read-only.
-  await page.goto('/transactions?type=trade');
+  await expect(page.locator('.ant-table-row').filter({ hasText: 'BUY AAPL' })).toContainText('-$300.00');
+  // …and so does the full list; they are read-only here.
+  await page.goto('/transactions?flow=all&type=trade');
   await page.locator('.ant-table-row').filter({ hasText: '-$300.00' }).click();
   await expect(modal(page)).toContainText('这是股票交易的资金记录');
   await page.keyboard.press('Escape');
@@ -536,7 +536,8 @@ for (const zone of [
     const tag = zone.dstGap ? 'NY' : 'SH';
     const created: string[] = [];
     try {
-      await p.goto('/transactions');
+      // The full list: the transfer below is edited from its receiving side too.
+      await p.goto('/transactions?flow=all');
       // The browser really is in that zone and on that day (and, in New York, 02:30 doesn't exist locally).
       const env = await p.evaluate(() => ({ zone: Intl.DateTimeFormat().resolvedOptions().timeZone, today: new Date().toDateString(), h: new Date(2026, 2, 8, 2, 30).getHours() }));
       expect(env).toEqual({ zone: zone.timezoneId, today: 'Sun Mar 08 2026', h: zone.dstGap ? 3 : 2 });
@@ -596,6 +597,103 @@ for (const zone of [
     }
   });
 }
+
+test('transactions views: outflows by default, the full list one click (and one URL) away', async () => {
+  const api = async (method: string, path: string, data?: unknown) => {
+    const r = await context.request.fetch(`${BASE_URL}/api${path}`, { method, data, headers: { origin: BASE_URL, 'x-zui-csrf': '1' } });
+    expect(r.ok(), `${method} ${path}: ${r.status()}`).toBe(true);
+    return r.json();
+  };
+  const accounts = await api('GET', '/accounts');
+  const checking = accounts.find((a: any) => a.name === 'Checking').id;
+  const hkd = accounts.find((a: any) => a.name === 'HKD Savings').id;
+  const brokerage = accounts.find((a: any) => a.name === 'Brokerage').id;
+  const day = dayjs().format('YYYY-MM-DD');
+  const created: string[] = [];
+  const trades: string[] = [];
+  const tx = async (b: Record<string, unknown>) => created.push((await api('POST', '/transactions', { occurredAt: day, ...b })).id);
+  const trade = async (b: Record<string, unknown>) => {
+    const dto = await api('POST', '/invest/trades', { accountId: brokerage, cashAccountId: checking, quantity: '1', tradeDate: day, ...b });
+    trades.push(dto.trades.find((x: any) => x.note === b.note).id);
+  };
+  const rows = page.locator('.ant-table-row');
+  const row = (text: string | RegExp) => rows.filter({ hasText: text });
+  const outflowRows = async () => {
+    await expect(row('FLOW-expense')).toContainText('-$12.00');
+    await expect(row('FLOW-transfer')).toContainText('转至');
+    await expect(row('FLOW-transfer')).toContainText('-$10.00');
+    await expect(row('FLOW-buy')).toContainText('BUY MSFT');
+    await expect(rows).toHaveCount(3);
+    await expect(page.getByTestId('outflow-hint')).toContainText('不等于消费支出');
+    await expect(page.getByTestId('tx-sums')).toHaveCount(0);
+  };
+  const allRows = async () => {
+    for (const who of ['FLOW-expense', 'FLOW-income', 'FLOW-adj', 'FLOW-buy', 'FLOW-sell']) await expect(row(who)).toHaveCount(1);
+    await expect(row('FLOW-transfer')).toHaveCount(2); // both legs
+    await expect(rows).toHaveCount(7);
+    await expect(page.getByTestId('outflow-hint')).toHaveCount(0);
+    // Income / expense totals keep their meaning: only income and expense entries count.
+    await expect(page.getByTestId('tx-sums')).toContainText('+$34.00');
+    await expect(page.getByTestId('tx-sums')).toContainText('-$12.00');
+  };
+  const selectedView = () => page.locator('#root .ant-segmented-item-selected');
+  try {
+    await tx({ type: 'expense', accountId: checking, amount: 1200, counterparty: 'FLOW-expense' });
+    await tx({ type: 'income', accountId: checking, amount: 3400, counterparty: 'FLOW-income' });
+    await tx({ type: 'adjustment', accountId: checking, amount: -500, counterparty: 'FLOW-adj' });
+    await tx({ type: 'transfer', fromAccountId: checking, toAccountId: hkd, amount: 1000, toAmount: 7800, purpose: 'FLOW-transfer' });
+    await trade({ symbol: 'MSFT', side: 'buy', price: '20', note: 'FLOW-buy' });
+    await trade({ symbol: 'AAPL', side: 'sell', price: '200', note: 'FLOW-sell' });
+
+    // Default: outflows only, no totals that would read as spending.
+    await page.goto('/transactions?q=FLOW');
+    await expect(selectedView()).toHaveText('资金流出');
+    await outflowRows();
+    // Only types that can be outflows are offered.
+    await page.locator('#root .ant-select').filter({ hasText: '类型' }).click();
+    const typeOptions = page.locator('.ant-select-dropdown:visible .ant-select-item-option');
+    await expect(typeOptions).toHaveText(['支出', '转账', '股票交易']);
+    await page.keyboard.press('Escape');
+    await shot(page, '24-tx-outflow');
+
+    // The full list: every type, both transfer legs, stock sells and adjustments.
+    await page.locator('#root .ant-segmented-item').filter({ hasText: '全部流水' }).click();
+    await expect(page).toHaveURL(/[?&]flow=all/);
+    await expect(selectedView()).toHaveText('全部流水');
+    await allRows();
+    await shot(page, '25-tx-all');
+
+    // Back / forward / reload keep the view in step with the URL.
+    await page.goBack();
+    await expect(page).not.toHaveURL(/flow=/);
+    await expect(selectedView()).toHaveText('资金流出');
+    await outflowRows();
+    await page.goForward();
+    await expect(selectedView()).toHaveText('全部流水');
+    await allRows();
+    await page.reload();
+    await expect(selectedView()).toHaveText('全部流水');
+    await allRows();
+
+    // Income picked in the full list is dropped when switching to outflows instead of emptying the list.
+    await page.goto('/transactions?q=FLOW&flow=all&type=income');
+    await expect(rows).toHaveCount(1);
+    await expect(row('FLOW-income')).toContainText('+$34.00');
+    await page.locator('#root .ant-segmented-item').filter({ hasText: '资金流出' }).click();
+    await expect(page).not.toHaveURL(/type=/);
+    await outflowRows();
+    // An old link with an incompatible type shows the outflows too.
+    await page.goto('/transactions?q=FLOW&type=income');
+    await outflowRows();
+    // Other filters still narrow the outflow view.
+    await page.goto('/transactions?q=FLOW&type=transfer');
+    await expect(rows).toHaveCount(1);
+    await expect(row('FLOW-transfer')).toContainText('-$10.00');
+  } finally {
+    for (const id of trades) await api('DELETE', `/invest/trades/${id}`);
+    for (const id of created) await api('DELETE', `/transactions/${id}`);
+  }
+});
 
 test('changes the profile picture', async () => {
   await page.goto('/security');

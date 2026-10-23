@@ -1,10 +1,10 @@
-import { PlusOutlined, RetweetOutlined, SearchOutlined } from '@ant-design/icons';
-import { Button, Card, DatePicker, Input, Select, Space, Switch, Table, Tag, Tooltip, Typography, type TableColumnsType } from 'antd';
+import { InfoCircleOutlined, PlusOutlined, RetweetOutlined, SearchOutlined } from '@ant-design/icons';
+import { Button, Card, DatePicker, Input, Segmented, Select, Space, Switch, Table, Tag, Tooltip, Typography, type TableColumnsType } from 'antd';
 import dayjs from 'dayjs';
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router';
-import { HIDDEN_TAG, TRANSACTION_TYPES, type TransactionDto } from '@z-ui/shared';
+import { HIDDEN_TAG, OUTFLOW_TYPES, TRANSACTION_TYPES, TX_FLOWS, type TransactionDto, type TxFlow } from '@z-ui/shared';
 import { useConfig, useTransactions, type TxFilters } from '../api/hooks.ts';
 import { useCustomColumns } from '../components/CustomFields.tsx';
 import { MoneyText } from '../components/Money.tsx';
@@ -15,6 +15,10 @@ import { useAccountOptions, useLookups } from '../lib/format.ts';
 
 const SHOW_HIDDEN_KEY = 'zui-tx-hidden';
 const FILTER_KEYS = ['accountId', 'institutionId', 'type', 'categoryId', 'tagId', 'from', 'to', 'q', 'currency'] as const;
+/** The view lives in the URL (?flow=all); without it the page shows outflows. */
+const flowOf = (params: URLSearchParams): TxFlow => (params.get('flow') === 'all' ? 'all' : 'outflow');
+/** Types the outflow view can contain; picking another there would always give an empty list. */
+const typeFits = (flow: TxFlow, type: string | null) => !!type && (flow === 'all' || (OUTFLOW_TYPES as readonly string[]).includes(type));
 
 export function TransactionsPage() {
   const { t } = useTranslation();
@@ -22,7 +26,14 @@ export function TransactionsPage() {
   const accountOptions = useAccountOptions();
   const { data: cfg } = useConfig();
   const [params, setParams] = useSearchParams();
+  const flow = flowOf(params);
   const [page, setPage] = useState(1);
+  // Back to page 1 whenever the view changes, also through the browser's back/forward buttons.
+  const [pageFlow, setPageFlow] = useState(flow);
+  if (pageFlow !== flow) {
+    setPageFlow(flow);
+    setPage(1);
+  }
   const [pageSize, setPageSize] = useState(30);
   const [modal, setModal] = useState<{ open: boolean; editing: TransactionDto | null }>({ open: false, editing: null });
   const [search, setSearch] = useState(params.get('q') ?? '');
@@ -46,11 +57,13 @@ export function TransactionsPage() {
   const hiddenTag = L.tags.find((x) => x.name.toLowerCase() === HIDDEN_TAG);
 
   const filters: TxFilters = useMemo(() => {
-    const f: TxFilters = { page, pageSize };
+    const f: TxFilters = { page, pageSize, flow: flowOf(params) };
     for (const k of FILTER_KEYS) {
       const v = params.get(k);
       if (v) f[k] = v;
     }
+    // A type that cannot be an outflow (e.g. from an older link) is ignored rather than emptying the list.
+    if (!typeFits(f.flow!, f.type ?? null)) delete f.type;
     // Filtering by the hidden tag itself obviously wants to see those.
     if (showHidden || (hiddenTag && f.tagId === hiddenTag.id)) f.hidden = '1';
     return f;
@@ -64,6 +77,18 @@ export function TransactionsPage() {
     setParams(next, { replace: true });
     setPage(1);
   };
+
+  /** Switch views as a new history entry, so back/forward moves between them. */
+  const setFlow = (v: TxFlow) => {
+    const next = new URLSearchParams(params);
+    if (v === 'all') next.set('flow', 'all');
+    else {
+      next.delete('flow');
+      if (!typeFits('outflow', next.get('type'))) next.delete('type');
+    }
+    setParams(next);
+  };
+  const typeParam = params.get('type');
 
   const customCols = useCustomColumns<TransactionDto>('transaction');
   const columns: TableColumnsType<TransactionDto> = [
@@ -160,6 +185,7 @@ export function TransactionsPage() {
       />
       <Card styles={{ body: { paddingBottom: 8 } }} style={{ marginBottom: 16 }}>
         <Space wrap size={[8, 8]}>
+          <Segmented<TxFlow> value={flow} onChange={setFlow} options={TX_FLOWS.map((k) => ({ value: k, label: t(`tx.flow.${k}`) }))} />
           <DatePicker.RangePicker
             value={range as never}
             onChange={(r) => {
@@ -195,9 +221,9 @@ export function TransactionsPage() {
             allowClear
             placeholder={t('common.type')}
             style={{ minWidth: 110 }}
-            value={params.get('type') ?? undefined}
+            value={typeFits(flow, typeParam) ? typeParam! : undefined}
             onChange={(v) => setFilter('type', v)}
-            options={TRANSACTION_TYPES.map((k) => ({ value: k, label: t(`tx.types.${k}`) }))}
+            options={(flow === 'outflow' ? OUTFLOW_TYPES : TRANSACTION_TYPES).map((k) => ({ value: k, label: t(`tx.types.${k}`) }))}
           />
           <Select
             allowClear
@@ -214,7 +240,10 @@ export function TransactionsPage() {
             value={params.get('categoryId') ?? undefined}
             onChange={(v) => setFilter('categoryId', v)}
             showSearch={{ optionFilterProp: 'label' }}
-            options={L.categories.map((c) => ({ value: c.id, label: c.name }))}
+            // Income categories never hold outflows; keep the selected one so its name still shows.
+            options={L.categories
+              .filter((c) => flow === 'all' || c.kind !== 'income' || c.id === params.get('categoryId'))
+              .map((c) => ({ value: c.id, label: c.name }))}
           />
           <Select
             allowClear
@@ -243,8 +272,13 @@ export function TransactionsPage() {
             </label>
           </Tooltip>
         </Space>
-        {data && data.sums.length > 0 && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 24px', marginTop: 12, fontSize: 13 }}>
+        {flow === 'outflow' && (
+          <div className="muted" data-testid="outflow-hint" style={{ marginTop: 12, fontSize: 13 }}>
+            <InfoCircleOutlined /> {t('tx.flow.outflowHint')}
+          </div>
+        )}
+        {flow === 'all' && data && data.sums.length > 0 && (
+          <div data-testid="tx-sums" style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 24px', marginTop: 12, fontSize: 13 }}>
             <span className="muted">{t('tx.sums')}</span>
             {data.sums.map((s) => (
               <span key={s.currency}>

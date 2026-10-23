@@ -20,6 +20,16 @@ export const TRANSACTION_TYPES = ['income', 'expense', 'transfer', 'adjustment',
 export type TransactionType = (typeof TRANSACTION_TYPES)[number];
 
 /**
+ * Transactions list views. outflow = money leaving an account: expenses, the sending leg of a
+ * transfer and stock-buy cash legs (amount < 0 of these types only). It is not spending — a
+ * transfer or a share purchase is not consumption. all = every type, stock-trade cash legs included.
+ */
+export const TX_FLOWS = ['outflow', 'all'] as const;
+export type TxFlow = (typeof TX_FLOWS)[number];
+/** Types that can appear in the outflow view (always with a negative amount). */
+export const OUTFLOW_TYPES = ['expense', 'transfer', 'trade'] as const satisfies readonly TransactionType[];
+
+/**
  * How far a transaction's details were checked against their source. Not stored (null) means
  * not marked — what every transaction recorded before these fields existed has.
  */

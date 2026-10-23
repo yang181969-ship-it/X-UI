@@ -238,7 +238,12 @@ const zh = {
   },
   tx: {
     showHidden: '显示 hidden',
-    hiddenHint: '带 hidden 标签的琐碎消费默认不在流水中显示，统计页照常统计。股票买卖的资金记录在「投资」页和账户详情中查看。',
+    hiddenHint: '带 hidden 标签的琐碎消费默认不在流水中显示，统计页照常统计。',
+    flow: {
+      outflow: '资金流出',
+      all: '全部流水',
+      outflowHint: '从各账户流出的记录：支出、转账转出、股票买入付款。不等于消费支出（转账和买入股票不是消费，信用卡消费与还款会各出现一次），因此不显示合计。',
+    },
     markHidden: 'hidden（琐碎消费，不在流水中显示，照常计入统计）',
     title: '流水',
     add: '记一笔',
@@ -272,7 +277,7 @@ const zh = {
     evidenceSourcePlaceholder: '如 银行流水、电子回单、短信、邮件',
     verificationStatus: '核实状态',
     verification: { none: '未标记', verified: '已核实', partial: '部分核实', pending: '待核实' },
-    sums: '筛选结果合计',
+    sums: '筛选结果合计（收入 / 支出）',
     deleteTransfer: '转账的两条记录会一起删除。',
     transferTo: '转至 {{name}}',
     transferFrom: '来自 {{name}}',

@@ -235,7 +235,10 @@ export interface TransactionListDto {
   total: number;
   page: number;
   pageSize: number;
-  /** Income/expense of the whole filtered set (not just the page), per currency. Transfers excluded. */
+  /**
+   * Income/expense of the whole filtered set (not just the page), per currency. Transfers excluded.
+   * Always empty for the outflow view, whose rows mix spending with transfers and share purchases.
+   */
   sums: CurrencySums[];
 }
 

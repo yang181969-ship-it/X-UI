@@ -1,8 +1,9 @@
-import { and, count, desc, eq, gte, inArray, lte, ne, notInArray, or, sql, type SQL } from 'drizzle-orm';
+import { and, count, desc, eq, gte, inArray, lt, lte, ne, notInArray, or, sql, type SQL } from 'drizzle-orm';
 import type { BatchItem } from 'drizzle-orm/batch';
 import { Hono, type Context } from 'hono';
 import {
   HIDDEN_TAG,
+  OUTFLOW_TYPES,
   TX_DETAIL_KEYS,
   transactionQuerySchema,
   transactionSchema,
@@ -143,8 +144,14 @@ export const listedTx = (userId: string) => and(ne(transactions.type, 'trade'), 
 
 function buildWhere(userId: string, q: ReturnType<typeof transactionQuerySchema.parse>): SQL {
   const conds: SQL[] = [eq(transactions.userId, userId)];
-  // Cash legs of stock trades belong to the investments page (and the account's own ledger).
-  if (!q.type && q.trades !== '1') conds.push(ne(transactions.type, 'trade'));
+  if (q.flow === 'outflow') {
+    // Money leaving an account: expenses, a transfer's sending leg, stock-buy cash legs.
+    // Income, receiving legs, stock-sell proceeds and adjustments (either sign) are left out.
+    conds.push(inArray(transactions.type, [...OUTFLOW_TYPES]), lt(transactions.amount, 0));
+  } else if (!q.flow && !q.type && q.trades !== '1') {
+    // Default (no view): cash legs of stock trades belong to the investments page (and the account's own ledger).
+    conds.push(ne(transactions.type, 'trade'));
+  }
   if (q.hidden !== '1') conds.push(notInArray(transactions.id, hiddenTxIds(userId)));
   if (q.accountId) conds.push(eq(transactions.accountId, q.accountId));
   if (q.cardId) conds.push(eq(transactions.cardId, q.cardId));
@@ -257,7 +264,8 @@ export const transactionRoutes = new Hono<AppBindings>()
         .limit(q.pageSize)
         .offset((q.page - 1) * q.pageSize),
       db.select({ n: count() }).from(transactions).where(where),
-      sumsByCurrency(db, where),
+      // Outflow rows mix spending with transfers and share purchases: no totals that read as spending.
+      q.flow === 'outflow' ? [] : sumsByCurrency(db, where),
     ]);
     return c.json({ items: await toDtos(db, c.var.user.id, rows), total: total?.n ?? 0, page: q.page, pageSize: q.pageSize, sums });
   })

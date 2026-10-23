@@ -21,6 +21,7 @@ import type {
   StatsDto,
   TagDto,
   TransactionListDto,
+  TxFlow,
 } from '@z-ui/shared';
 import { ApiError, get, qs } from './client.ts';
 
@@ -84,6 +85,8 @@ export interface TxFilters {
   hidden?: '1';
   /** '1': include stock-trade cash legs. */
   trades?: '1';
+  /** List view (see transactionQuerySchema); omitted keeps the original filtering. */
+  flow?: TxFlow;
   page?: number;
   pageSize?: number;
 }

@@ -240,7 +240,12 @@ const en: Dict = {
   },
   tx: {
     showHidden: 'Show hidden',
-    hiddenHint: 'Small spending tagged “hidden” is left out of this list by default and still counted in the statistics. Stock-trade cash legs are on the Investments page and in the account’s ledger.',
+    hiddenHint: 'Small spending tagged “hidden” is left out of this list by default and still counted in the statistics.',
+    flow: {
+      outflow: 'Outflows',
+      all: 'All entries',
+      outflowHint: 'Money leaving your accounts: expenses, outgoing transfers and stock-purchase payments. This is not spending (transfers and share purchases are not consumption, and a card purchase and its repayment both appear), so no total is shown.',
+    },
     markHidden: 'hidden (small spending: kept out of this list, still in the statistics)',
     title: 'Transactions',
     add: 'Add transaction',
@@ -274,7 +279,7 @@ const en: Dict = {
     evidenceSourcePlaceholder: 'e.g. bank statement, receipt, SMS, email',
     verificationStatus: 'Verification',
     verification: { none: 'Not marked', verified: 'Verified', partial: 'Partly verified', pending: 'To verify' },
-    sums: 'Totals for this filter',
+    sums: 'Totals for this filter (income / expense)',
     deleteTransfer: 'Both sides of the transfer will be deleted.',
     transferTo: 'to {{name}}',
     transferFrom: 'from {{name}}',
