@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, gte, lte } from 'drizzle-orm';
+import { and, asc, count, eq, gte, lte } from 'drizzle-orm';
 import { Hono } from 'hono';
 import {
   dashboardQuerySchema,
@@ -16,7 +16,7 @@ import { today } from './bills.ts';
 import { convert } from './fx.ts';
 import { investDto } from './invest.ts';
 import { query } from '../lib/http.ts';
-import { listedTx, sumsByCurrency, toDtos } from './transactions.ts';
+import { listedTx, sumsByCurrency, toDtos, txOrder } from './transactions.ts';
 
 export const dashboardRoutes = new Hono<AppBindings>().get('/', async (c) => {
   const { db } = c.var.deps;
@@ -36,7 +36,7 @@ export const dashboardRoutes = new Hono<AppBindings>().get('/', async (c) => {
       .select()
       .from(transactions)
       .where(and(eq(transactions.userId, userId), listedTx(userId)))
-      .orderBy(desc(transactions.occurredAt), desc(transactions.createdAt))
+      .orderBy(...txOrder)
       .limit(10),
     sumsByCurrency(db, and(eq(transactions.userId, userId), gte(transactions.occurredAt, monthStart(t)), lte(transactions.occurredAt, monthEnd(t)))!),
     db.select({ n: count() }).from(cards).where(and(eq(cards.userId, userId), eq(cards.archived, false))),

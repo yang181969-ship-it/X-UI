@@ -9,6 +9,7 @@ import { useConfig, useTransactions, type TxFilters } from '../api/hooks.ts';
 import { useCustomColumns } from '../components/CustomFields.tsx';
 import { MoneyText } from '../components/Money.tsx';
 import { TransactionModal } from '../components/TransactionModal.tsx';
+import { VerificationMark } from '../components/TxRow.tsx';
 import { PageTop } from '../layouts/PanelLayout.tsx';
 import { useAccountOptions, useLookups } from '../lib/format.ts';
 
@@ -66,7 +67,22 @@ export function TransactionsPage() {
 
   const customCols = useCustomColumns<TransactionDto>('transaction');
   const columns: TableColumnsType<TransactionDto> = [
-    { key: 'date', title: t('common.date'), dataIndex: 'occurredAt', width: 110 },
+    {
+      key: 'date',
+      title: t('common.date'),
+      dataIndex: 'occurredAt',
+      width: 110,
+      render: (d: string, tx) => (
+        <>
+          <div>{d}</div>
+          {tx.occurredTime && (
+            <div className="muted" style={{ fontSize: 12 }} title={tx.timeZone ?? undefined}>
+              {tx.occurredTime}
+            </div>
+          )}
+        </>
+      ),
+    },
     {
       key: 'what',
       title: t('tx.counterparty'),
@@ -77,6 +93,12 @@ export function TransactionsPage() {
             <span>
               <RetweetOutlined className="muted" />{' '}
               {tx.amount < 0 ? t('tx.transferTo', { name: L.accountLabel(tx.counterpartAccountId) }) : t('tx.transferFrom', { name: L.accountLabel(tx.counterpartAccountId) })}
+              <VerificationMark status={tx.verificationStatus} />
+              {tx.purpose && (
+                <Typography.Text type="secondary" style={{ marginLeft: 6, fontSize: 12 }}>
+                  {tx.purpose}
+                </Typography.Text>
+              )}
             </span>
           );
         }
@@ -88,6 +110,12 @@ export function TransactionsPage() {
               </Tag>
             )}
             {tx.counterparty || (!cat ? t(`tx.types.${tx.type}`) : '')}
+            <VerificationMark status={tx.verificationStatus} />
+            {tx.purpose && (
+              <Typography.Text type="secondary" style={{ marginLeft: 6, fontSize: 12 }}>
+                {tx.purpose}
+              </Typography.Text>
+            )}
             {tx.note && (
               <Typography.Text type="secondary" style={{ marginLeft: 6, fontSize: 12 }}>
                 {tx.note}

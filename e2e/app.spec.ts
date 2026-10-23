@@ -1,7 +1,7 @@
 import { resolve } from 'node:path';
 import { expect, test, type BrowserContext, type Locator, type Page } from '@playwright/test';
 import dayjs from 'dayjs';
-import { ADMIN, ADMIN_TOTP_SECRET, totp } from './fixtures.ts';
+import { ADMIN, ADMIN_TOTP_SECRET, BASE_URL, totp } from './fixtures.ts';
 
 /**
  * End-to-end journey through the real UI (production build), in order:
@@ -459,6 +459,143 @@ test('balance date: the synced balance includes that day; only later transaction
   await shot(page, '23-balance-date');
   await page.keyboard.press('Escape');
 });
+
+test('optional transaction details: collapsed by default, saved, shown, edited and cleared', async () => {
+  await page.goto('/transactions');
+  await page.getByRole('button', { name: '记一笔' }).click();
+  // The simple form stays as it was: the details are folded away.
+  const details = modal(page).locator('.ant-collapse-item').filter({ hasText: '详细信息' });
+  await expect(details).not.toHaveClass(/ant-collapse-item-active/);
+  await pick(page, '账户', /Wallet/);
+  await page.getByLabel('金额', { exact: true }).fill('5');
+  await page.getByLabel('商户 / 对方', { exact: true }).fill('Taxi');
+  await details.locator('.ant-collapse-header').click();
+  const time = page.getByLabel('时间', { exact: true });
+  await time.fill('2330');
+  await time.blur();
+  await expect(time).toHaveValue('23:30');
+  await pick(page, '时区', 'America/Los_Angeles');
+  await page.getByLabel('具体用途', { exact: true }).fill('机场接送');
+  await page.getByLabel('订单号 / 交易参考号', { exact: true }).fill('RIDE-42');
+  await pick(page, '核实状态', '已核实');
+  await expect(details).toContainText('已填 5 项');
+  await modal(page).getByRole('button', { name: btn('保存') }).click();
+  await expect(page.locator('.ant-modal-wrap:visible')).toHaveCount(0);
+
+  const row = page.locator('.ant-table-row').filter({ hasText: 'Taxi' });
+  // Business date as entered (today), the local time under it; the time zone never moves the date.
+  await expect(row).toContainText(dayjs().format('YYYY-MM-DD'));
+  await expect(row).toContainText('23:30');
+  await expect(row).toContainText('机场接送');
+  await shot(page, '24-transaction-details');
+
+  // Reopening shows the details expanded; clearing the time leaves it empty (no 00:00).
+  await row.click();
+  await expect(details).toHaveClass(/ant-collapse-item-active/);
+  await expect(page.getByLabel('订单号 / 交易参考号', { exact: true })).toHaveValue('RIDE-42');
+  await expect(page.getByLabel('时间', { exact: true })).toHaveValue('23:30');
+  await modal(page).locator('.ant-input-affix-wrapper').filter({ has: page.getByLabel('时间', { exact: true }) }).locator('.ant-input-clear-icon').click();
+  await modal(page).getByRole('button', { name: btn('保存') }).click();
+  await expect(page.locator('.ant-modal-wrap:visible')).toHaveCount(0);
+  await expect(row).not.toContainText('23:30');
+  await expect(row).toContainText('机场接送');
+
+  // Details never change the balance: $70 − $5, and back after deleting.
+  await page.goto('/accounts');
+  const wallet = page.locator('#root .row-item').filter({ hasText: /^Wallet/ });
+  await expect(wallet).toContainText('$65.00');
+  await page.goto('/transactions');
+  await row.click();
+  await expect(page.getByLabel('时间', { exact: true })).toHaveValue('');
+  await modal(page).getByRole('button', { name: /删\s*除/ }).click(); // icon + text
+  await page.locator('.ant-popconfirm').getByRole('button', { name: btn('确定') }).click();
+  await expect(page.locator('.ant-table-row').filter({ hasText: 'Taxi' })).toHaveCount(0);
+  await page.goto('/accounts');
+  await expect(wallet).toContainText('$70.00');
+});
+
+/**
+ * occurredTime is a plain local "HH:mm" string. Editing a transaction must give it back exactly,
+ * whatever the browser's own zone and date — even on a day its clocks skip 02:00–03:00
+ * (America/New_York, 2026-03-08), where binding the time to "today" turned 02:30 into 03:30.
+ */
+for (const zone of [
+  { timezoneId: 'Asia/Shanghai', label: 'Shanghai (no DST)', dstGap: false, noon: '2026-03-08T12:00:00+08:00' },
+  { timezoneId: 'America/New_York', label: 'New York on its DST day', dstGap: true, noon: '2026-03-08T12:00:00-04:00' },
+]) {
+  test(`keeps the exact HH:mm when editing other fields — browser in ${zone.label}`, async ({ browser }) => {
+    const ctx = await browser.newContext({ storageState: await context.storageState(), timezoneId: zone.timezoneId, locale: 'zh-CN' });
+    const p = await ctx.newPage();
+    // Noon local time on 2026-03-08 in the browser (only the page's JS clock; the server keeps its own).
+    await p.clock.setFixedTime(new Date(zone.noon));
+    const api = async (method: string, path: string, data?: unknown) => {
+      const r = await ctx.request.fetch(`${BASE_URL}/api${path}`, { method, data, headers: { origin: BASE_URL, 'x-zui-csrf': '1' } });
+      expect(r.ok(), `${method} ${path}: ${r.status()}`).toBe(true);
+      return r.json();
+    };
+    const tag = zone.dstGap ? 'NY' : 'SH';
+    const created: string[] = [];
+    try {
+      await p.goto('/transactions');
+      // The browser really is in that zone and on that day (and, in New York, 02:30 doesn't exist locally).
+      const env = await p.evaluate(() => ({ zone: Intl.DateTimeFormat().resolvedOptions().timeZone, today: new Date().toDateString(), h: new Date(2026, 2, 8, 2, 30).getHours() }));
+      expect(env).toEqual({ zone: zone.timezoneId, today: 'Sun Mar 08 2026', h: zone.dstGap ? 3 : 2 });
+
+      const accounts = await api('GET', '/accounts');
+      const wallet = accounts.find((a: any) => a.name === 'Wallet').id;
+      const checking = accounts.find((a: any) => a.name === 'Checking').id;
+      const details = { timeZone: 'Asia/Hong_Kong', purpose: `dst-${tag}` };
+
+      // Expenses at 01:30, 02:30 and 03:30: open each, change only the note, save.
+      for (const occurredTime of ['01:30', '02:30', '03:30']) {
+        const who = `DST-${tag}-${occurredTime}`;
+        const tx = await api('POST', '/transactions', { type: 'expense', accountId: wallet, amount: 100, occurredAt: '2026-03-08', counterparty: who, occurredTime, ...details });
+        created.push(tx.id);
+        await p.reload();
+        await p.locator('.ant-table-row').filter({ hasText: who }).click();
+        await expect(p.getByLabel('时间', { exact: true })).toHaveValue(occurredTime);
+        await p.getByLabel('备注', { exact: true }).fill('note only');
+        await modal(p).getByRole('button', { name: btn('保存') }).click();
+        await expect(p.locator('.ant-modal-wrap:visible')).toHaveCount(0);
+        expect(await api('GET', `/transactions/${tx.id}`)).toMatchObject({ occurredAt: '2026-03-08', occurredTime, timeZone: 'Asia/Hong_Kong', note: 'note only' });
+      }
+
+      // A transfer at 02:30, edited from each side: both legs keep exactly 02:30.
+      const x = await api('POST', '/transactions', { type: 'transfer', fromAccountId: wallet, toAccountId: checking, amount: 100, occurredAt: '2026-03-08', occurredTime: '02:30', ...details, purpose: `DST-XFER-${tag}` });
+      created.push(x.id);
+      const legs = async () => (await api('GET', '/transactions?type=transfer&pageSize=200')).items.filter((l: any) => l.transferGroupId === x.transferGroupId);
+      for (const [side, edit] of [
+        ['来自', async () => p.getByLabel('备注', { exact: true }).fill('edited from the receiving side')],
+        ['转至', async () => p.getByLabel('订单号 / 交易参考号', { exact: true }).fill(`REF-${tag}`)],
+      ] as const) {
+        await p.reload();
+        await p.locator('.ant-table-row').filter({ hasText: `DST-XFER-${tag}` }).filter({ hasText: side }).click();
+        await expect(p.getByLabel('时间', { exact: true })).toHaveValue('02:30');
+        await edit();
+        await modal(p).getByRole('button', { name: btn('保存') }).click();
+        await expect(p.locator('.ant-modal-wrap:visible')).toHaveCount(0);
+        const both = await legs();
+        expect(both).toHaveLength(2);
+        for (const l of both) expect(l).toMatchObject({ occurredAt: '2026-03-08', occurredTime: '02:30', timeZone: 'Asia/Hong_Kong' });
+      }
+      expect((await legs()).map((l: any) => [l.note, l.referenceNumber])).toEqual([
+        ['edited from the receiving side', `REF-${tag}`],
+        ['edited from the receiving side', `REF-${tag}`],
+      ]);
+
+      // Clearing the time stores null — not 00:00 — and leaves the other details alone.
+      await p.reload();
+      await p.locator('.ant-table-row').filter({ hasText: `DST-${tag}-02:30` }).click();
+      await p.getByLabel('时间', { exact: true }).fill('');
+      await modal(p).getByRole('button', { name: btn('保存') }).click();
+      await expect(p.locator('.ant-modal-wrap:visible')).toHaveCount(0);
+      expect(await api('GET', `/transactions/${created[1]}`)).toMatchObject({ occurredTime: null, timeZone: 'Asia/Hong_Kong', purpose: `dst-${tag}` });
+    } finally {
+      for (const id of created) await api('DELETE', `/transactions/${id}`);
+      await ctx.close();
+    }
+  });
+}
 
 test('changes the profile picture', async () => {
   await page.goto('/security');

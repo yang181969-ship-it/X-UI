@@ -1,11 +1,21 @@
 import { DeleteOutlined } from '@ant-design/icons';
 import { useQueryClient } from '@tanstack/react-query';
-import { Alert, App, Button, Checkbox, DatePicker, Form, Input, Modal, Popconfirm, Segmented, Select, Space, Typography } from 'antd';
+import { Alert, App, Button, Checkbox, Col, Collapse, DatePicker, Form, Input, Modal, Popconfirm, Row, Segmented, Select, Space, Typography, type InputProps } from 'antd';
 import dayjs, { type Dayjs } from 'dayjs';
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
-import { fromMinor, HIDDEN_TAG, type AccountDto, type TagDto, type TransactionDto, type TransactionType } from '@z-ui/shared';
+import {
+  fromMinor,
+  HIDDEN_TAG,
+  parseTimeOfDay,
+  VERIFICATION_STATUSES,
+  type AccountDto,
+  type TagDto,
+  type TransactionDto,
+  type TransactionType,
+  type VerificationStatus,
+} from '@z-ui/shared';
 import { del, post, put } from '../api/client.ts';
 import { errorText, invalidateLedger } from '../api/hooks.ts';
 import { cardLabel, useAccountOptions, useDecimals, useLookups } from '../lib/format.ts';
@@ -29,6 +39,56 @@ interface Values {
   occurredAt: Dayjs;
   tagIds?: string[];
   extra?: Record<string, unknown>;
+  // Optional details. Empty stays empty: no time or source is ever filled in for the user.
+  /** The "HH:mm" string itself (never a Date), as stored and as typed. */
+  occurredTime?: string;
+  timeZone?: string | null;
+  purpose?: string;
+  paymentChannel?: string;
+  referenceNumber?: string;
+  evidenceSource?: string;
+  /** '' = not marked. */
+  verificationStatus?: VerificationStatus | '';
+}
+
+const DETAIL_FIELDS = ['occurredTime', 'timeZone', 'purpose', 'paymentChannel', 'referenceNumber', 'evidenceSource', 'verificationStatus'] as const;
+
+/**
+ * Local time of day typed as text. The form holds the "HH:mm" string itself: no Date or Dayjs is
+ * ever made from it, so the browser's date and zone (DST gaps included) can't change it. On blur a
+ * loose entry ("930", "9:30") is tidied to "09:30"; anything else is left for the validator.
+ */
+function TimeOfDayInput({ value, onChange, ...rest }: Omit<InputProps, 'value' | 'onChange'> & { value?: string; onChange?: (v: string) => void }) {
+  return (
+    <Input
+      {...rest}
+      value={value ?? ''}
+      onChange={(e) => onChange?.(e.target.value)}
+      onBlur={() => {
+        const tidy = value ? parseTimeOfDay(value) : null;
+        if (tidy && tidy !== value) onChange?.(tidy);
+      }}
+      maxLength={5}
+      inputMode="numeric"
+      autoComplete="off"
+      allowClear
+    />
+  );
+}
+
+const hasDetails = (tx: TransactionDto | null | undefined) => !!tx && DETAIL_FIELDS.some((k) => !!tx[k]);
+
+/** IANA zones known to the browser; the browser's own zone first. */
+function timeZoneOptions(current?: string | null) {
+  let zones: string[] = [];
+  try {
+    zones = Intl.supportedValuesOf('timeZone');
+  } catch {
+    /* older browsers: only the local zone and UTC */
+  }
+  const local = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const list = [...new Set([local, ...zones, 'UTC', ...(current ? [current] : [])])].filter(Boolean);
+  return list.map((z) => ({ value: z, label: z }));
 }
 
 export interface TxDefaults {
@@ -38,8 +98,22 @@ export interface TxDefaults {
 }
 
 function initialValues(tx: TransactionDto | null | undefined, d: TxDefaults): Partial<Values> {
-  if (!tx) return { type: d.type ?? 'expense', accountId: d.accountId, cardId: d.cardId, occurredAt: dayjs(), tagIds: [], extra: {} };
-  const common = { occurredAt: dayjs(tx.occurredAt), note: tx.note ?? undefined, counterparty: tx.counterparty ?? undefined, tagIds: tx.tagIds, extra: tx.extra, categoryId: tx.categoryId };
+  if (!tx) return { type: d.type ?? 'expense', accountId: d.accountId, cardId: d.cardId, occurredAt: dayjs(), tagIds: [], extra: {}, verificationStatus: '' };
+  const common = {
+    occurredAt: dayjs(tx.occurredAt),
+    note: tx.note ?? undefined,
+    counterparty: tx.counterparty ?? undefined,
+    tagIds: tx.tagIds,
+    extra: tx.extra,
+    categoryId: tx.categoryId,
+    occurredTime: tx.occurredTime ?? undefined,
+    timeZone: tx.timeZone,
+    purpose: tx.purpose ?? undefined,
+    paymentChannel: tx.paymentChannel ?? undefined,
+    referenceNumber: tx.referenceNumber ?? undefined,
+    evidenceSource: tx.evidenceSource ?? undefined,
+    verificationStatus: tx.verificationStatus ?? ('' as const),
+  };
   if (tx.type === 'transfer') {
     const out = tx.amount < 0;
     const other = { accountId: tx.counterpartAccountId ?? undefined, currency: tx.counterpartCurrency ?? undefined, amount: tx.counterpartAmount ?? 0 };
@@ -100,11 +174,17 @@ export function TransactionModal({
   const currencyField = Form.useWatch('currency', form);
   const fromCurField = Form.useWatch('fromCurrency', form);
   const toCurField = Form.useWatch('toCurrency', form);
+  const detailsFilled = Form.useWatch((v: Values) => DETAIL_FIELDS.filter((k) => !!v[k]).length, form) ?? 0;
+  const savedTimeZone = editing?.timeZone;
+  const zoneOptions = useMemo(() => timeZoneOptions(savedTimeZone), [savedTimeZone]);
+  // The simple form by default; details open when the edited transaction has some.
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   useEffect(() => {
     if (open) {
       form.resetFields();
       form.setFieldsValue(initialValues(editing, defaults) as Values);
+      setDetailsOpen(hasDetails(editing));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, editing]);
@@ -143,7 +223,22 @@ export function TransactionModal({
         if (known.has(id)) tagIds.push(id);
         else tagIds.push((await post<TagDto>('/tags', { name: id })).id);
       }
-      const base = { occurredAt: v.occurredAt.format('YYYY-MM-DD'), note: v.note || null, counterparty: v.counterparty || null, tagIds, extra: v.extra ?? {} };
+      const base = {
+        occurredAt: v.occurredAt.format('YYYY-MM-DD'),
+        note: v.note || null,
+        counterparty: v.counterparty || null,
+        tagIds,
+        extra: v.extra ?? {},
+        // Always sent, so clearing a field clears it (the API keeps fields that are left out).
+        // Blank (cleared) → null, never "00:00"; an untouched stored value goes back unchanged.
+        occurredTime: v.occurredTime?.trim() ? parseTimeOfDay(v.occurredTime) : null,
+        timeZone: v.timeZone || null,
+        purpose: v.purpose?.trim() || null,
+        paymentChannel: v.paymentChannel?.trim() || null,
+        referenceNumber: v.referenceNumber?.trim() || null,
+        evidenceSource: v.evidenceSource?.trim() || null,
+        verificationStatus: v.verificationStatus || null,
+      };
       const body =
         v.type === 'transfer'
           ? { ...base, type: 'transfer', fromAccountId: v.fromAccountId, fromCurrency, toAccountId: v.toAccountId, toCurrency, amount: v.amount, toAmount: crossCurrency ? v.toAmount : null }
@@ -334,6 +429,79 @@ export function TransactionModal({
         <Form.Item name="note" label={t('common.note')}>
           <Input.TextArea autoSize={{ minRows: 1, maxRows: 4 }} maxLength={2000} />
         </Form.Item>
+        <Collapse
+          ghost
+          size="small"
+          style={{ margin: '-8px -12px 8px' }}
+          activeKey={detailsOpen ? ['details'] : []}
+          onChange={(keys) => setDetailsOpen(keys.includes('details'))}
+          items={[
+            {
+              key: 'details',
+              label: (
+                <span>
+                  {t('tx.details')}
+                  {detailsFilled > 0 && (
+                    <Typography.Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
+                      {t('tx.detailsFilled', { n: detailsFilled })}
+                    </Typography.Text>
+                  )}
+                </span>
+              ),
+              // Kept mounted while collapsed so the values are still submitted.
+              forceRender: true,
+              children: (
+                <>
+                  <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -4 }}>
+                    {t('tx.detailsHint')}
+                  </Typography.Paragraph>
+                  <Row gutter={12}>
+                    <Col span={10}>
+                      <Form.Item
+                        name="occurredTime"
+                        label={t('tx.occurredTime')}
+                        rules={[{ validator: (_, v?: string) => (!v?.trim() || parseTimeOfDay(v) ? Promise.resolve() : Promise.reject(new Error(t('tx.occurredTimeInvalid')))) }]}
+                      >
+                        <TimeOfDayInput placeholder={t('tx.occurredTimePlaceholder')} />
+                      </Form.Item>
+                    </Col>
+                    <Col span={14}>
+                      <Form.Item name="timeZone" label={t('tx.timeZone')}>
+                        <Select allowClear showSearch={{ optionFilterProp: 'label' }} options={zoneOptions} placeholder={t('tx.timeZonePlaceholder')} />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                  <Form.Item name="purpose" label={t('tx.purpose')}>
+                    <Input maxLength={500} />
+                  </Form.Item>
+                  <Row gutter={12}>
+                    <Col span={12}>
+                      <Form.Item name="paymentChannel" label={t('tx.paymentChannel')}>
+                        <Input maxLength={64} placeholder={t('tx.paymentChannelPlaceholder')} />
+                      </Form.Item>
+                    </Col>
+                    <Col span={12}>
+                      <Form.Item name="referenceNumber" label={t('tx.referenceNumber')}>
+                        <Input maxLength={128} />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                  <Form.Item name="evidenceSource" label={t('tx.evidenceSource')}>
+                    <Input maxLength={500} placeholder={t('tx.evidenceSourcePlaceholder')} />
+                  </Form.Item>
+                  <Form.Item name="verificationStatus" label={t('tx.verificationStatus')} style={{ marginBottom: 8 }}>
+                    <Select
+                      options={[
+                        { value: '', label: t('tx.verification.none') },
+                        ...VERIFICATION_STATUSES.map((k) => ({ value: k, label: t(`tx.verification.${k}`) })),
+                      ]}
+                    />
+                  </Form.Item>
+                </>
+              ),
+            },
+          ]}
+        />
         <CustomFieldInputs entity="transaction" />
       </Form>
     </Modal>

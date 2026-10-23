@@ -3,11 +3,13 @@ import type { BatchItem } from 'drizzle-orm/batch';
 import { Hono, type Context } from 'hono';
 import {
   HIDDEN_TAG,
+  TX_DETAIL_KEYS,
   transactionQuerySchema,
   transactionSchema,
   type CurrencySums,
   type TransactionDto,
   type TransactionInput,
+  type TxDetailKey,
 } from '@z-ui/shared';
 import type { DB } from '../db/client.ts';
 import { accounts, billOccurrences, tags, transactions, transactionTags } from '../db/schema.ts';
@@ -21,10 +23,28 @@ import { accountCurrency, applyExtra, assertOwnTags, ownAccount, ownCard, ownCat
 export type TxRow = typeof transactions.$inferSelect;
 type C = Context<AppBindings>;
 
-/** Row content derived from a request, before ids/timestamps are attached. */
-type Leg = Pick<TxRow, 'accountId' | 'cardId' | 'type' | 'amount' | 'currency' | 'occurredAt' | 'categoryId' | 'counterparty' | 'note' | 'extra'> & {
-  role: 'main' | 'from' | 'to';
-};
+/** Optional record details (time, purpose, reference…); they never affect balances or statistics. */
+export type TxDetails = Pick<TxRow, TxDetailKey>;
+const NO_DETAILS = Object.fromEntries(TX_DETAIL_KEYS.map((k) => [k, null])) as TxDetails;
+
+/**
+ * Row content derived from a request, before ids/timestamps are attached. Legs built elsewhere
+ * (bill payments, stock-trade cash legs) may leave the details out: they are stored as null.
+ */
+type Leg = Pick<TxRow, 'accountId' | 'cardId' | 'type' | 'amount' | 'currency' | 'occurredAt' | 'categoryId' | 'counterparty' | 'note' | 'extra'> &
+  Partial<TxDetails> & {
+    role: 'main' | 'from' | 'to';
+  };
+
+/** Details for a write: given fields win, omitted ones keep the stored value (null clears). */
+function mergeDetails(input: TransactionInput, stored: Partial<TxDetails>): TxDetails {
+  const out = { ...NO_DETAILS };
+  for (const k of TX_DETAIL_KEYS) {
+    const v = input[k];
+    (out as Record<TxDetailKey, unknown>)[k] = v === undefined ? (stored[k] ?? null) : v;
+  }
+  return out;
+}
 
 export async function toDtos(db: DB, userId: string, rows: TxRow[]): Promise<TransactionDto[]> {
   if (rows.length === 0) return [];
@@ -54,12 +74,16 @@ export async function toDtos(db: DB, userId: string, rows: TxRow[]): Promise<Tra
   });
 }
 
-/** Validate a request against the user's accounts/cards/categories and turn it into legs. */
-export async function planLegs(c: C, input: TransactionInput, storedExtra: Record<string, unknown>): Promise<Leg[]> {
+/**
+ * Validate a request against the user's accounts/cards/categories and turn it into legs.
+ * `storedExtra` / `storedDetails` come from the edited row (if any) and are kept unless replaced.
+ * Every leg gets the same details, so both sides of a transfer always agree.
+ */
+export async function planLegs(c: C, input: TransactionInput, storedExtra: Record<string, unknown>, storedDetails: Partial<TxDetails> = {}): Promise<Leg[]> {
   const { db } = c.var.deps;
   const userId = c.var.user.id;
   const extra = applyExtra(c.var.deps, 'transaction', storedExtra, input.extra);
-  const common = { occurredAt: input.occurredAt, note: input.note ?? null, counterparty: input.counterparty ?? null, extra };
+  const common = { occurredAt: input.occurredAt, note: input.note ?? null, counterparty: input.counterparty ?? null, extra, ...mergeDetails(input, storedDetails) };
 
   if (input.type === 'transfer') {
     const from = await ownAccount(db, userId, input.fromAccountId);
@@ -151,11 +175,19 @@ function buildWhere(userId: string, q: ReturnType<typeof transactionQuerySchema.
       or(
         sql`${transactions.note} like ${pattern} escape '\\'`,
         sql`${transactions.counterparty} like ${pattern} escape '\\'`,
+        sql`${transactions.purpose} like ${pattern} escape '\\'`,
+        sql`${transactions.referenceNumber} like ${pattern} escape '\\'`,
       )!,
     );
   }
   return and(...conds)!;
 }
+
+/**
+ * Newest first by business date; within a day, entries with a recorded time come first (latest
+ * time first; SQLite sorts NULL last when descending), then by when they were entered.
+ */
+export const txOrder = [desc(transactions.occurredAt), desc(transactions.occurredTime), desc(transactions.createdAt), desc(transactions.id)];
 
 /** Income/expense sums per currency for a set of transactions (transfers excluded). */
 export async function sumsByCurrency(db: DB, where: SQL): Promise<CurrencySums[]> {
@@ -190,6 +222,7 @@ type LegLinks = { billOccurrenceId?: string | null; statementId?: string | null;
 export function legRows(userId: string, legs: Leg[], now: number, links: LegLinks = {}): TxRow[] {
   const group = legs.length > 1 ? newId() : null;
   return legs.map((leg) => ({
+    ...NO_DETAILS,
     ...legToValues(leg),
     id: newId(),
     userId,
@@ -220,7 +253,7 @@ export const transactionRoutes = new Hono<AppBindings>()
         .select()
         .from(transactions)
         .where(where)
-        .orderBy(desc(transactions.occurredAt), desc(transactions.createdAt), desc(transactions.id))
+        .orderBy(...txOrder)
         .limit(q.pageSize)
         .offset((q.page - 1) * q.pageSize),
       db.select({ n: count() }).from(transactions).where(where),
@@ -259,7 +292,7 @@ export const transactionRoutes = new Hono<AppBindings>()
     const old = await legsOf(db, userId, id);
     const edited = old.find((l) => l.id === id)!;
     if (edited.type === 'trade') fail(409, 'edit stock trades on the investments page', 'TRADE_TX');
-    const legs = await planLegs(c, input, edited.extra);
+    const legs = await planLegs(c, input, edited.extra, edited);
     const tagIds = await assertOwnTags(db, userId, input.tagIds);
     const t = now();
 

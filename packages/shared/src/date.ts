@@ -75,3 +75,46 @@ export function nextDayOfMonth(from: string, day: number): string {
   if (Math.min(day, daysInMonth(y, m)) >= d) return thisMonth;
   return addMonths(fromParts(y, m, 1), 1, day);
 }
+
+/**
+ * Optional local wall-clock time of a transaction, "HH:mm" (24 h). It only describes the moment
+ * on the business date (occurredAt) and is never used to shift that date.
+ */
+export const TIME_OF_DAY_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+export function isTimeOfDay(s: string): boolean {
+  return TIME_OF_DAY_RE.test(s);
+}
+
+/**
+ * A typed time as "HH:mm", or null if it isn't one: "9:05", "0905", "905", "09.05" and "09：05"
+ * all give "09:05"; a valid "HH:mm" comes back unchanged. Pure string work — no Date is involved,
+ * so neither the current day nor any time zone (DST gaps included) can change the result.
+ */
+export function parseTimeOfDay(input: string): string | null {
+  const s = input.trim().replace(/[：.．]/g, ':');
+  const m = /^(\d{1,2}):(\d{2})$/.exec(s) ?? /^(\d{1,2})(\d{2})$/.exec(s);
+  if (!m) return null;
+  const hhmm = `${m[1]!.padStart(2, '0')}:${m[2]}`;
+  return isTimeOfDay(hhmm) ? hhmm : null;
+}
+
+/** Region/City style IANA names ("Asia/Shanghai", "America/Argentina/Buenos_Aires", "UTC"); no "+08:00" offsets. */
+const TIME_ZONE_NAME_RE = /^[A-Za-z][A-Za-z0-9_+-]*(\/[A-Za-z0-9_+-]+){0,2}$/;
+
+/**
+ * An IANA time zone known to this runtime as it should be stored, or null if it isn't one.
+ * Only the letter case is corrected ("asia/shanghai" → "Asia/Shanghai"): the runtime's own
+ * canonical name can be an old alias (V8 turns "Asia/Kolkata" into "Asia/Calcutta"), so a
+ * valid name is otherwise kept exactly as chosen.
+ */
+export function normalizeTimeZone(tz: string): string | null {
+  if (tz.length > 64 || !TIME_ZONE_NAME_RE.test(tz)) return null;
+  let resolved: string;
+  try {
+    resolved = new Intl.DateTimeFormat('en-US', { timeZone: tz }).resolvedOptions().timeZone;
+  } catch {
+    return null;
+  }
+  return resolved.toLowerCase() === tz.toLowerCase() ? resolved : tz;
+}

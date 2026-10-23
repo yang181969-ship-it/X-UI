@@ -19,6 +19,13 @@ export type AccountType = (typeof ACCOUNT_TYPES)[number];
 export const TRANSACTION_TYPES = ['income', 'expense', 'transfer', 'adjustment', 'trade'] as const;
 export type TransactionType = (typeof TRANSACTION_TYPES)[number];
 
+/**
+ * How far a transaction's details were checked against their source. Not stored (null) means
+ * not marked — what every transaction recorded before these fields existed has.
+ */
+export const VERIFICATION_STATUSES = ['verified', 'partial', 'pending'] as const;
+export type VerificationStatus = (typeof VERIFICATION_STATUSES)[number];
+
 export const CATEGORY_KINDS = ['expense', 'income'] as const;
 export type CategoryKind = (typeof CATEGORY_KINDS)[number];
 

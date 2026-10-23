@@ -305,6 +305,20 @@ export const transactions = sqliteTable(
     amount: integer('amount').notNull(),
     currency: text('currency').notNull().default(''),
     occurredAt: text('occurred_at').notNull(),
+    /**
+     * Optional record details (all null on rows from before they existed — never back-filled).
+     * occurredTime is the local wall-clock "HH:mm" in timeZone (IANA) on the business date
+     * occurredAt; nothing converts between zones, so the date never moves. None of these columns
+     * take part in balances, FX or statistics.
+     */
+    occurredTime: text('occurred_time'),
+    timeZone: text('time_zone'),
+    purpose: text('purpose'),
+    paymentChannel: text('payment_channel'),
+    referenceNumber: text('reference_number'),
+    evidenceSource: text('evidence_source'),
+    /** null = not marked. */
+    verificationStatus: text('verification_status', { enum: ['verified', 'partial', 'pending'] }),
     categoryId: text('category_id'),
     counterparty: text('counterparty'),
     note: text('note'),

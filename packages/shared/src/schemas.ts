@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { CARD_BRANDS, CARD_FORMS, CARD_FUNDING, CARD_STATUSES, LIMIT_PERIODS } from './card.ts';
-import { isIsoDate } from './date.ts';
+import { normalizeTimeZone, isIsoDate, isTimeOfDay } from './date.ts';
 import {
   ACCOUNT_TYPES,
   BILL_KINDS,
@@ -10,6 +10,7 @@ import {
   PAST_POLICIES,
   ROLES,
   TRANSACTION_TYPES,
+  VERIFICATION_STATUSES,
 } from './enums.ts';
 import { RECURRENCE_FREQS } from './recurrence.ts';
 
@@ -202,12 +203,56 @@ export const categoryPatchSchema = categorySchema.partial();
 export const tagSchema = z.object({ name: z.string().trim().min(1).max(32), color });
 export const tagPatchSchema = tagSchema.partial();
 
+/** Local wall-clock time "HH:mm"; describes the moment on occurredAt, never shifts it. */
+export const timeOfDaySchema = z.string().refine(isTimeOfDay, 'invalid time (HH:mm)');
+/** IANA time zone such as "Asia/Shanghai" (letter case corrected, never swapped for another name); blank = none. */
+export const timeZoneSchema = z
+  .string()
+  .trim()
+  .max(64)
+  .transform((s, ctx) => {
+    if (!s) return null;
+    const tz = normalizeTimeZone(s);
+    if (!tz) ctx.addIssue({ code: 'custom', message: 'unknown IANA time zone' });
+    return tz ?? z.NEVER;
+  });
+/** Optional free text; blank is stored as null. */
+const detailText = (max: number) =>
+  z
+    .string()
+    .trim()
+    .max(max)
+    .transform((s) => s || null)
+    .nullish();
+
+/**
+ * Optional record details of a transaction. They never affect balances, FX or statistics.
+ * Omitted (undefined) on an update keeps the stored value; null clears it.
+ */
+export const transactionDetailFields = {
+  occurredTime: timeOfDaySchema.nullish(),
+  timeZone: timeZoneSchema.nullish(),
+  /** What exactly the money was for. */
+  purpose: detailText(500),
+  /** e.g. Alipay, WeChat Pay, Apple Pay, wire, cash. */
+  paymentChannel: detailText(64),
+  /** Order number or the bank / payment reference. */
+  referenceNumber: detailText(128),
+  /** Where the record comes from: statement, receipt, SMS, email… */
+  evidenceSource: detailText(500),
+  /** null = not marked. */
+  verificationStatus: z.enum(VERIFICATION_STATUSES).nullish(),
+};
+export const TX_DETAIL_KEYS = Object.keys(transactionDetailFields) as (keyof typeof transactionDetailFields)[];
+export type TxDetailKey = keyof typeof transactionDetailFields;
+
 const txCommon = {
   occurredAt: isoDateSchema,
   note: optText(2000),
   counterparty: optText(128),
   tagIds: z.array(idSchema).max(20).optional(),
   extra: extraSchema.optional(),
+  ...transactionDetailFields,
 };
 
 export const transactionSchema = z.discriminatedUnion('type', [

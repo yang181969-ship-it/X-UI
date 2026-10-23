@@ -9,6 +9,7 @@ import type {
   Role,
   SessionMethod,
   TransactionType,
+  VerificationStatus,
 } from './enums.ts';
 import type { RecurrenceFreq } from './recurrence.ts';
 
@@ -199,6 +200,14 @@ export interface TransactionDto {
   amount: number;
   currency: string;
   occurredAt: string;
+  /** Optional details (null when not recorded; older transactions have none). Both legs of a transfer share them. */
+  occurredTime: string | null;
+  timeZone: string | null;
+  purpose: string | null;
+  paymentChannel: string | null;
+  referenceNumber: string | null;
+  evidenceSource: string | null;
+  verificationStatus: VerificationStatus | null;
   categoryId: string | null;
   counterparty: string | null;
   note: string | null;

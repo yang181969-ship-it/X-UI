@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   addMonths,
   appConfigSchema,
+  normalizeTimeZone,
   binOf,
   checkPan,
   decimalToMinor,
@@ -16,6 +17,8 @@ import {
   formatPan,
   fromMinor,
   isIsoDate,
+  isTimeOfDay,
+  parseTimeOfDay,
   luhnValid,
   mergeExtra,
   nextDayOfMonth,
@@ -26,6 +29,7 @@ import {
   serializeConfig,
   summarizeConfigChange,
   toMinor,
+  transactionSchema,
   unifiedDiff,
   type CustomField,
 } from '../src/index.ts';
@@ -132,6 +136,31 @@ describe('dates & recurrence', () => {
     expect(isIsoDate('2028-02-29')).toBe(true);
     expect(isIsoDate('2026-02-29')).toBe(false);
     expect(isIsoDate('2026-13-01')).toBe(false);
+  });
+
+  it('validates HH:mm times and IANA time zones for transaction details', () => {
+    for (const ok of ['00:00', '09:05', '23:59']) expect(isTimeOfDay(ok)).toBe(true);
+    for (const bad of ['24:00', '9:05', '12:60', '12:30:00', '', ' 12:30']) expect(isTimeOfDay(bad)).toBe(false);
+    // Typed times: stored HH:mm strings come back exactly (01:30 / 02:30 / 03:30 are never normalised),
+    // loose input is tidied, and nothing goes through a Date, so DST days can't shift anything.
+    for (const v of ['00:00', '01:30', '02:30', '03:30', '23:59']) expect(parseTimeOfDay(v)).toBe(v);
+    expect(['930', '0930', '9:30', '09.30', '09：30', ' 09:30 '].map(parseTimeOfDay)).toEqual(Array(6).fill('09:30'));
+    for (const bad of ['', '24:00', '2:60', '12:3', '12345', '12:30:00', 'ab:cd', '-1:30']) expect(parseTimeOfDay(bad)).toBeNull();
+    expect(normalizeTimeZone('Asia/Shanghai')).toBe('Asia/Shanghai');
+    expect(normalizeTimeZone('asia/shanghai')).toBe('Asia/Shanghai');
+    expect(normalizeTimeZone('America/Argentina/Buenos_Aires')).toBe('America/Argentina/Buenos_Aires');
+    // Valid names are kept as chosen, not swapped for the runtime's legacy alias.
+    expect(normalizeTimeZone('Asia/Kolkata')).toBe('Asia/Kolkata');
+    expect(normalizeTimeZone('US/Eastern')).toBe('US/Eastern');
+    expect(normalizeTimeZone('UTC')).toBe('UTC');
+    for (const bad of ['+08:00', 'UTC+8', 'Mars/Base', 'Asia/', '', 'a'.repeat(65)]) expect(normalizeTimeZone(bad)).toBeNull();
+  });
+
+  it('accepts transactions without details and normalises blank detail text to null', () => {
+    const base = { type: 'expense', accountId: 'a', amount: 1, occurredAt: '2026-10-01' };
+    expect(transactionSchema.parse(base)).not.toHaveProperty('occurredTime');
+    expect(transactionSchema.parse({ ...base, purpose: '  ', timeZone: ' ', referenceNumber: ' A-1 ' })).toMatchObject({ purpose: null, timeZone: null, referenceNumber: 'A-1' });
+    expect(transactionSchema.safeParse({ ...base, verificationStatus: 'unmarked' }).success).toBe(false);
   });
 
   it('clamps month-end and returns to the anchor day', () => {
