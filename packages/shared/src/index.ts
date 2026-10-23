@@ -1,4 +1,5 @@
 export * from './api-types.ts';
+export * from './archive.ts';
 export * from './card.ts';
 export * from './config-diff.ts';
 export * from './config-schema.ts';

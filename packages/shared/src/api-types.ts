@@ -1,6 +1,10 @@
+import type { ConvertBlocker } from './archive.ts';
 import type { BinInfo, CardBrand, CardForm, CardFunding, CardStatus, LimitPeriod } from './card.ts';
 import type {
   AccountType,
+  ArchiveRecordType,
+  ArchiveStatus,
+  DatePrecision,
   BillKind,
   CardTheme,
   CategoryKind,
@@ -240,6 +244,69 @@ export interface TransactionListDto {
    * Always empty for the outflow view, whose rows mix spending with transfers and share purchases.
    */
   sums: CurrencySums[];
+}
+
+/** A historical record (archive). Never part of balances, net worth or statistics. */
+export interface HistoricalRecordDto {
+  id: string;
+  title: string;
+  recordType: ArchiveRecordType;
+  status: ArchiveStatus;
+  datePrecision: DatePrecision;
+  /** See archiveDateIssue: day → equal, month/year → first and last day, unknown → null. */
+  dateFrom: string | null;
+  dateTo: string | null;
+  occurredTime: string | null;
+  timeZone: string | null;
+  /** Positive minor units; the direction comes from recordType. */
+  amount: number | null;
+  currency: string | null;
+  accountId: string | null;
+  fromAccountId: string | null;
+  toAccountId: string | null;
+  toAmount: number | null;
+  toCurrency: string | null;
+  assetCode: string | null;
+  /** Decimal string, never a float. */
+  assetQuantity: string | null;
+  feeAmount: number | null;
+  feeCurrency: string | null;
+  exchangeRate: string | null;
+  counterparty: string | null;
+  purpose: string | null;
+  paymentChannel: string | null;
+  referenceNumber: string | null;
+  evidenceSource: string | null;
+  note: string | null;
+  verificationStatus: VerificationStatus;
+  /** linked / converted: the transaction (for a transfer, its sending leg). */
+  linkedTransactionId: string | null;
+  convertedAt: number | null;
+  /**
+   * When the record went back to open because its transaction was deleted or changed to a type
+   * that no longer fits (null otherwise).
+   */
+  linkLostAt: number | null;
+  /** Why it cannot be converted right now (empty = it can). */
+  convertBlockers: ConvertBlocker[];
+  /** Incremented by every write; send it back so a change made meanwhile is refused, not overwritten. */
+  version: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface HistoricalRecordDetailDto extends HistoricalRecordDto {
+  /** The linked entry; both legs for a transfer. */
+  linkedTransactions: TransactionDto[];
+}
+
+export interface HistoricalRecordListDto {
+  items: HistoricalRecordDto[];
+  total: number;
+  page: number;
+  pageSize: number;
+  /** Records per status, for the whole archive (unfiltered). */
+  counts: Record<ArchiveStatus, number>;
 }
 
 export interface BillDto {

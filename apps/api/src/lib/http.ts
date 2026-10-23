@@ -35,3 +35,10 @@ export function query<S extends z.ZodType>(c: Context, schema: S): z.infer<S> {
   if (!r.success) fail(400, 'invalid query', 'VALIDATION', r.error.issues);
   return r.data;
 }
+
+/** The messages of an error and its causes (drivers wrap the database's own message), joined. */
+export function errorChain(err: unknown): string {
+  const out: string[] = [];
+  for (let e: unknown = err; e && out.length < 10; e = (e as { cause?: unknown }).cause) out.push(e instanceof Error ? e.message : String(e));
+  return out.join(' | ');
+}

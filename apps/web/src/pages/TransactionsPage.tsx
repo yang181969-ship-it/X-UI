@@ -1,10 +1,12 @@
 import { InfoCircleOutlined, PlusOutlined, RetweetOutlined, SearchOutlined } from '@ant-design/icons';
+import { useQuery } from '@tanstack/react-query';
 import { Button, Card, DatePicker, Input, Segmented, Select, Space, Switch, Table, Tag, Tooltip, Typography, type TableColumnsType } from 'antd';
 import dayjs from 'dayjs';
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router';
 import { HIDDEN_TAG, OUTFLOW_TYPES, TRANSACTION_TYPES, TX_FLOWS, type TransactionDto, type TxFlow } from '@z-ui/shared';
+import { get } from '../api/client.ts';
 import { useConfig, useTransactions, type TxFilters } from '../api/hooks.ts';
 import { useCustomColumns } from '../components/CustomFields.tsx';
 import { MoneyText } from '../components/Money.tsx';
@@ -36,6 +38,18 @@ export function TransactionsPage() {
   }
   const [pageSize, setPageSize] = useState(30);
   const [modal, setModal] = useState<{ open: boolean; editing: TransactionDto | null }>({ open: false, editing: null });
+  // ?tx=<id> (e.g. from a historical record) opens that entry.
+  const txParam = params.get('tx');
+  const { data: linkedTx } = useQuery({ queryKey: ['transaction', txParam], queryFn: () => get<TransactionDto>(`/transactions/${txParam}`), enabled: !!txParam });
+  const shown = !modal.open && txParam && linkedTx ? { open: true, editing: linkedTx } : modal;
+  const closeModal = () => {
+    setModal({ open: false, editing: null });
+    if (txParam) {
+      const next = new URLSearchParams(params);
+      next.delete('tx');
+      setParams(next, { replace: true });
+    }
+  };
   const [search, setSearch] = useState(params.get('q') ?? '');
   // Small everyday spending tagged "hidden" stays out of the list unless shown (remembered).
   const [showHidden, setShowHidden] = useState(() => {
@@ -315,12 +329,7 @@ export function TransactionsPage() {
           scroll={{ x: 640 }}
         />
       </Card>
-      <TransactionModal
-        open={modal.open}
-        editing={modal.editing}
-        defaults={{ accountId: params.get('accountId') ?? undefined }}
-        onClose={() => setModal({ open: false, editing: null })}
-      />
+      <TransactionModal open={shown.open} editing={shown.editing} defaults={{ accountId: params.get('accountId') ?? undefined }} onClose={closeModal} />
     </>
   );
 }

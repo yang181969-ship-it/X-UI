@@ -36,6 +36,13 @@
       "when": 1792743261390,
       "tag": "0004_tx_details",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1792753208636,
+      "tag": "0005_historical_records",
+      "breakpoints": true
     }
   ]
 }

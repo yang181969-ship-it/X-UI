@@ -18,6 +18,7 @@ const DashboardPage = lazy(() => import('./pages/DashboardPage.tsx').then((m) =>
 const AccountsPage = lazy(() => import('./pages/AccountsPage.tsx').then((m) => ({ default: m.AccountsPage })));
 const CardsPage = lazy(() => import('./pages/CardsPage.tsx').then((m) => ({ default: m.CardsPage })));
 const TransactionsPage = lazy(() => import('./pages/TransactionsPage.tsx').then((m) => ({ default: m.TransactionsPage })));
+const ArchivePage = lazy(() => import('./pages/ArchivePage.tsx').then((m) => ({ default: m.ArchivePage })));
 const BillsPage = lazy(() => import('./pages/BillsPage.tsx').then((m) => ({ default: m.BillsPage })));
 const StatementsPage = lazy(() => import('./pages/StatementsPage.tsx').then((m) => ({ default: m.StatementsPage })));
 const SettingsPage = lazy(() => import('./pages/SettingsPage.tsx').then((m) => ({ default: m.SettingsPage })));
@@ -48,6 +49,7 @@ const router = createBrowserRouter([
       { path: 'accounts', element: <AccountsPage /> },
       { path: 'cards', element: <CardsPage /> },
       { path: 'transactions', element: <TransactionsPage /> },
+      { path: 'archive', element: <ArchivePage /> },
       { path: 'bills', element: <BillsPage /> },
       { path: 'statements', element: <StatementsPage /> },
       { path: 'settings', element: <SettingsPage /> },

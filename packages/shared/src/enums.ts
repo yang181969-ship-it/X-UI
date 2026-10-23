@@ -36,6 +36,22 @@ export const OUTFLOW_TYPES = ['expense', 'transfer', 'trade'] as const satisfies
 export const VERIFICATION_STATUSES = ['verified', 'partial', 'pending'] as const;
 export type VerificationStatus = (typeof VERIFICATION_STATUSES)[number];
 
+/**
+ * Historical records (the archive): past money events kept apart from the ledger until they are
+ * converted into, or linked to, a real transaction. investment / crypto are kept and searchable
+ * only — they wait for dedicated modules and are never turned into ordinary entries.
+ */
+export const ARCHIVE_RECORD_TYPES = ['expense', 'income', 'transfer', 'investment', 'crypto', 'other', 'unknown'] as const;
+export type ArchiveRecordType = (typeof ARCHIVE_RECORD_TYPES)[number];
+
+/** open = still to be dealt with; linked / converted point at a transaction; dismissed = kept but ignored. */
+export const ARCHIVE_STATUSES = ['open', 'linked', 'converted', 'dismissed'] as const;
+export type ArchiveStatus = (typeof ARCHIVE_STATUSES)[number];
+
+/** How precisely the date of a historical record is known (see archiveDateIssue). */
+export const DATE_PRECISIONS = ['day', 'month', 'year', 'range', 'unknown'] as const;
+export type DatePrecision = (typeof DATE_PRECISIONS)[number];
+
 export const CATEGORY_KINDS = ['expense', 'income'] as const;
 export type CategoryKind = (typeof CATEGORY_KINDS)[number];
 

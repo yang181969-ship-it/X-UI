@@ -1,8 +1,12 @@
 import { z } from 'zod';
 import { CARD_BRANDS, CARD_FORMS, CARD_FUNDING, CARD_STATUSES, LIMIT_PERIODS } from './card.ts';
+import { archiveDateIssue } from './archive.ts';
 import { normalizeTimeZone, isIsoDate, isTimeOfDay } from './date.ts';
 import {
   ACCOUNT_TYPES,
+  ARCHIVE_RECORD_TYPES,
+  ARCHIVE_STATUSES,
+  DATE_PRECISIONS,
   BILL_KINDS,
   CARD_THEMES,
   CATEGORY_KINDS,
@@ -317,6 +321,101 @@ export const transactionQuerySchema = z.object({
   flow: z.enum(TX_FLOWS).optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(200).default(50),
+});
+
+/** Positive decimal kept as text so no float ever touches it (asset quantities, rates). */
+const decimalText = (intDigits: number, fracDigits: number) =>
+  z
+    .string()
+    .trim()
+    .regex(new RegExp(`^\\d{1,${intDigits}}(\\.\\d{1,${fracDigits}})?$`), `number with up to ${fracDigits} decimals`)
+    .refine((s) => /[1-9]/.test(s), 'must be positive');
+
+/**
+ * Version of a historical record the client last saw. Every write to a record increments it; a
+ * request carrying an older version is refused (409 ARCHIVE_CHANGED) instead of acting on
+ * content the user never saw. Optional: without it the version read by the server is used.
+ */
+const recordVersion = z.number().int().min(1).optional();
+
+/**
+ * A historical record (create or full replace: omitted fields are stored as null). Only the
+ * title is required; dates follow archiveDateIssue, a time needs an exact day, and every amount
+ * needs its currency (minor units mean nothing without one). A fee of 0 means "known: no fee"
+ * and needs no currency; null means unknown.
+ */
+const historicalRecordFields = z.object({
+  title: z.string().trim().min(1).max(200),
+  recordType: z.enum(ARCHIVE_RECORD_TYPES).default('unknown'),
+  datePrecision: z.enum(DATE_PRECISIONS).default('unknown'),
+  dateFrom: isoDateSchema.nullish(),
+  dateTo: isoDateSchema.nullish(),
+  occurredTime: timeOfDaySchema.nullish(),
+  timeZone: timeZoneSchema.nullish(),
+  /** Positive minor units of `currency`; the direction comes from the record type. */
+  amount: positiveMinorSchema.nullish(),
+  currency: currencyCodeSchema.nullish(),
+  accountId: idSchema.nullish(),
+  fromAccountId: idSchema.nullish(),
+  toAccountId: idSchema.nullish(),
+  toAmount: positiveMinorSchema.nullish(),
+  toCurrency: currencyCodeSchema.nullish(),
+  assetCode: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .max(32)
+    .transform((s) => s || null)
+    .nullish(),
+  assetQuantity: decimalText(20, 18).nullish(),
+  feeAmount: minorSchema.refine((n) => n >= 0, 'must be ≥ 0').nullish(),
+  feeCurrency: currencyCodeSchema.nullish(),
+  exchangeRate: decimalText(12, 18).nullish(),
+  counterparty: detailText(128),
+  purpose: detailText(500),
+  paymentChannel: detailText(64),
+  referenceNumber: detailText(128),
+  evidenceSource: detailText(500),
+  note: detailText(2000),
+  verificationStatus: z.enum(VERIFICATION_STATUSES).default('pending'),
+});
+
+function checkHistoricalRecord(v: z.infer<typeof historicalRecordFields>, ctx: z.RefinementCtx) {
+  const dateIssue = archiveDateIssue(v.datePrecision, v.dateFrom, v.dateTo);
+  if (dateIssue) ctx.addIssue({ code: 'custom', message: dateIssue, path: ['dateFrom'] });
+  if (v.datePrecision !== 'day') {
+    if (v.occurredTime) ctx.addIssue({ code: 'custom', message: 'a time needs an exact day', path: ['occurredTime'] });
+    if (v.timeZone) ctx.addIssue({ code: 'custom', message: 'a time zone needs an exact day', path: ['timeZone'] });
+  }
+  for (const [amount, currency] of [
+    ['amount', 'currency'],
+    ['toAmount', 'toCurrency'],
+    ['feeAmount', 'feeCurrency'],
+  ] as const) {
+    if (v[amount] && !v[currency]) ctx.addIssue({ code: 'custom', message: 'an amount needs its currency', path: [currency] });
+  }
+}
+
+export const historicalRecordSchema = historicalRecordFields.superRefine(checkHistoricalRecord);
+export type HistoricalRecordInput = z.infer<typeof historicalRecordSchema>;
+/** Full replace of an existing record. */
+export const historicalRecordUpdateSchema = historicalRecordFields.extend({ version: recordVersion }).superRefine(checkHistoricalRecord);
+
+export const historicalVerificationSchema = z.object({ verificationStatus: z.enum(VERIFICATION_STATUSES), version: recordVersion });
+export const historicalLinkSchema = z.object({ transactionId: idSchema, version: recordVersion });
+/** Body of dismiss / reopen / unlink / convert. */
+export const historicalActionSchema = z.object({ version: recordVersion });
+
+export const historicalQuerySchema = z.object({
+  /** Default: open (still to be dealt with). */
+  status: z.enum([...ARCHIVE_STATUSES, 'all']).default('open'),
+  recordType: z.enum(ARCHIVE_RECORD_TYPES).optional(),
+  datePrecision: z.enum(DATE_PRECISIONS).optional(),
+  verificationStatus: z.enum(VERIFICATION_STATUSES).optional(),
+  /** Title, counterparty, purpose, reference number and note. */
+  q: z.string().trim().max(100).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(200).default(30),
 });
 
 const billFields = {

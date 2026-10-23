@@ -3,7 +3,7 @@ import type { BatchItem } from 'drizzle-orm/batch';
 import { Hono } from 'hono';
 import { accountPatchSchema, accountSchema, type AccountCurrencyDto, type AccountDto, type InvestDto } from '@z-ui/shared';
 import type { DB } from '../db/client.ts';
-import { accountCurrencies, accounts, cards, trades, transactions } from '../db/schema.ts';
+import { accountCurrencies, accounts, cards, historicalRecords, trades, transactions } from '../db/schema.ts';
 import type { AppBindings } from '../env.ts';
 import { recalcAccountOps, recalcUserOps } from '../lib/balances.ts';
 import { chunkRows, inChunks } from '../lib/chunks.ts';
@@ -197,8 +197,18 @@ export const accountRoutes = new Hono<AppBindings>()
       .select({ n: count() })
       .from(trades)
       .where(and(eq(trades.userId, userId), or(eq(trades.accountId, cur.id), eq(trades.cashAccountId, cur.id))));
-    if ((tx?.n ?? 0) > 0 || (cd?.n ?? 0) > 0 || (tr?.n ?? 0) > 0) {
-      fail(409, 'account has transactions, cards or stock trades — archive it instead', 'HAS_CHILDREN');
+    // Historical records naming the account keep it too (they are never deleted along with it).
+    const [hr] = await db
+      .select({ n: count() })
+      .from(historicalRecords)
+      .where(
+        and(
+          eq(historicalRecords.userId, userId),
+          or(eq(historicalRecords.accountId, cur.id), eq(historicalRecords.fromAccountId, cur.id), eq(historicalRecords.toAccountId, cur.id)),
+        ),
+      );
+    if ((tx?.n ?? 0) > 0 || (cd?.n ?? 0) > 0 || (tr?.n ?? 0) > 0 || (hr?.n ?? 0) > 0) {
+      fail(409, 'account has transactions, cards, stock trades or historical records — archive it instead', 'HAS_CHILDREN');
     }
     await runBatch(db, [
       db.delete(accountCurrencies).where(eq(accountCurrencies.accountId, cur.id)),

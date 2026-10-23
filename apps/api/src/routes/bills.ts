@@ -16,8 +16,10 @@ import {
 } from '@z-ui/shared';
 import { accounts, billOccurrences, bills, cards, transactions, transactionTags } from '../db/schema.ts';
 import type { AppBindings, Deps } from '../env.ts';
-import { recalcOps } from '../lib/balances.ts';
+import { releaseArchiveOps } from '../lib/archive.ts';
+import { pairsOf, recalcOps } from '../lib/balances.ts';
 import { chunkIds, chunkRows, inChunks } from '../lib/chunks.ts';
+import { entryLegs, entryUnchanged, guardOps, isWholeTransfer, rethrowGuard } from '../lib/entries.ts';
 import { body, fail, notFound, query } from '../lib/http.ts';
 import { newId } from '../lib/id.ts';
 import { assertCurrency, currenciesOf, defined, ownAccount, ownCard, ownCategory, runBatch } from '../lib/ledger.ts';
@@ -432,7 +434,11 @@ export const billRoutes = new Hono<AppBindings>()
     return c.json({ ok: true });
   })
 
-  /** Undo pay/skip. Undoing a payment deletes the transaction it created. */
+  /**
+   * Undo pay/skip. Undoing a payment deletes the entry it created — the whole entry: a payment
+   * since edited into a transfer goes with both legs. One batch, guarded: if the entry or the
+   * occurrence changed after being read here, nothing is written (409 TX_CHANGED).
+   */
   .post('/occurrences/:id/reset', async (c) => {
     const { db, now } = c.var.deps;
     const userId = c.var.user.id;
@@ -441,17 +447,30 @@ export const billRoutes = new Hono<AppBindings>()
       .from(billOccurrences)
       .where(and(eq(billOccurrences.id, c.req.param('id')), eq(billOccurrences.userId, userId)));
     if (!o) notFound('occurrence');
-    const ops: BatchItem<'sqlite'>[] = [
-      db.update(billOccurrences).set({ status: 'pending', transactionId: null, updatedAt: now() }).where(eq(billOccurrences.id, o.id)),
-    ];
-    if (o.transactionId) {
-      const [tx] = await db.select().from(transactions).where(and(eq(transactions.id, o.transactionId), eq(transactions.userId, userId)));
+    const t = now();
+    const ops: BatchItem<'sqlite'>[] = [];
+    // A transaction that no longer exists leaves nothing to delete: only the occurrence is reset.
+    const legs = o.transactionId ? await entryLegs(db, userId, o.transactionId) : [];
+    if (legs.length) {
+      if (legs[0]!.transferGroupId && !isWholeTransfer(legs)) {
+        fail(409, 'the payment is part of an incomplete transfer — fix or delete that transfer on the transactions page', 'TX_GROUP_INVALID');
+      }
+      const ids = legs.map((l) => l.id);
+      const stillPaidBy = sql`exists (select 1 from ${billOccurrences} where ${billOccurrences.id} = ${o.id} and ${billOccurrences.userId} = ${userId} and ${billOccurrences.status} = ${o.status} and ${billOccurrences.transactionId} = ${o.transactionId})`;
       ops.push(
-        db.delete(transactionTags).where(eq(transactionTags.transactionId, o.transactionId)),
-        db.delete(transactions).where(and(eq(transactions.id, o.transactionId), eq(transactions.userId, userId))),
-        ...(tx ? recalcOps(db, [{ accountId: tx.accountId, currency: tx.currency }]) : []),
+        ...guardOps(db, userId, and(entryUnchanged(userId, legs), stillPaidBy)!),
+        // Historical records linked to it go back to open (before the delete: the foreign key needs it).
+        ...releaseArchiveOps(db, userId, ids, t),
+        db.delete(transactionTags).where(inArray(transactionTags.transactionId, ids)),
+        db.delete(transactions).where(and(eq(transactions.userId, userId), inArray(transactions.id, ids))),
+        ...recalcOps(db, pairsOf(legs)),
       );
     }
-    await runBatch(db, ops);
-    return c.json({ ok: true });
+    ops.push(db.update(billOccurrences).set({ status: 'pending', transactionId: null, updatedAt: t }).where(eq(billOccurrences.id, o.id)));
+    try {
+      await runBatch(db, ops);
+    } catch (err) {
+      rethrowGuard(err);
+    }
+    return c.json({ ok: true, deleted: legs.length });
   });

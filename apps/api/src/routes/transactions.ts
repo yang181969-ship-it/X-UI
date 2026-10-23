@@ -1,4 +1,4 @@
-import { and, count, desc, eq, gte, inArray, lt, lte, ne, notInArray, or, sql, type SQL } from 'drizzle-orm';
+import { and, count, desc, eq, getTableColumns, gte, inArray, lt, lte, ne, notInArray, or, sql, type SQL } from 'drizzle-orm';
 import type { BatchItem } from 'drizzle-orm/batch';
 import { Hono, type Context } from 'hono';
 import {
@@ -15,9 +15,11 @@ import {
 import type { DB } from '../db/client.ts';
 import { accounts, billOccurrences, tags, transactions, transactionTags } from '../db/schema.ts';
 import type { AppBindings } from '../env.ts';
+import { convertedTypeGuardOps, followArchiveOps, releaseArchiveOps, releaseMismatchedOps } from '../lib/archive.ts';
 import { pairsOf, recalcOps } from '../lib/balances.ts';
+import { entryUnchanged, guardOps, rethrowGuard } from '../lib/entries.ts';
 import { inChunks } from '../lib/chunks.ts';
-import { body, fail, notFound, query } from '../lib/http.ts';
+import { body, errorChain, fail, notFound, query } from '../lib/http.ts';
 import { newId } from '../lib/id.ts';
 import { accountCurrency, applyExtra, assertOwnTags, ownAccount, ownCard, ownCategory, runBatch } from '../lib/ledger.ts';
 
@@ -250,6 +252,24 @@ export function insertLegOps(db: DB, userId: string, legs: Leg[], tagIds: string
   return { rows, ops };
 }
 
+/**
+ * insertLegOps for a write that must only happen while `condition` (an SQL boolean, typically an
+ * EXISTS on another table) holds: each leg is an INSERT … SELECT … WHERE condition. Inside one
+ * batch every leg sees the same state, so either all legs are written or none — with no reliance
+ * on a later statement failing. The balance recalculation that follows is correct either way.
+ */
+export function insertLegOpsWhen(db: DB, userId: string, legs: Leg[], now: number, condition: SQL) {
+  const rows = legRows(userId, legs, now);
+  const columns = Object.entries(getTableColumns(transactions));
+  const ops: BatchItem<'sqlite'>[] = rows.map((row) =>
+    db
+      .insert(transactions)
+      .select(sql`select ${sql.join(columns.map(([key, col]) => sql.param(row[key as keyof TxRow], col)), sql`, `)} where ${condition}`),
+  );
+  ops.push(...recalcOps(db, pairsOf(rows)));
+  return { rows, ops };
+}
+
 export const transactionRoutes = new Hono<AppBindings>()
   .get('/', async (c) => {
     const q = query(c, transactionQuerySchema);
@@ -317,7 +337,16 @@ export const transactionRoutes = new Hono<AppBindings>()
     const keepIds = new Set(ids.values());
     const oldIds = new Set(old.map((l) => l.id));
 
-    const ops: BatchItem<'sqlite'>[] = [db.delete(transactionTags).where(inArray(transactionTags.transactionId, [...oldIds]))];
+    const ops: BatchItem<'sqlite'>[] = [
+      db.delete(transactionTags).where(inArray(transactionTags.transactionId, [...oldIds])),
+      // Historical records linked to this entry stay linked to it (before a removed leg goes),
+      // unless they no longer fit its new type: those go back to open — in this same batch, so a
+      // link written before it is always seen, and one written after it checks the new type.
+      // A record *converted* into this entry that wouldn't fit refuses the edit (rolls it back).
+      ...convertedTypeGuardOps(db, userId, [...oldIds], legs[0]!.type),
+      ...releaseMismatchedOps(db, userId, [...oldIds], legs[0]!.type, t),
+      ...followArchiveOps(db, userId, [...oldIds], ids.get(legs[0]!)!, t),
+    ];
     const removed = [...oldIds].filter((x) => !keepIds.has(x));
     if (removed.length) {
       ops.push(
@@ -337,7 +366,14 @@ export const transactionRoutes = new Hono<AppBindings>()
     const tagValues = [...keepIds].flatMap((txId) => tagIds.map((tagId) => ({ transactionId: txId, tagId })));
     if (tagValues.length) ops.push(db.insert(transactionTags).values(tagValues));
     ops.push(...recalcOps(db, [...pairsOf(old), ...pairsOf(legs)]));
-    await runBatch(db, ops);
+    try {
+      await runBatch(db, ops);
+    } catch (err) {
+      if (errorChain(err).includes('historical_records.status')) {
+        fail(409, 'this entry was converted from a historical record of another kind — delete it (the record goes back to open) to book it differently', 'TX_FROM_ARCHIVE');
+      }
+      throw err;
+    }
 
     const [row] = await db.select().from(transactions).where(eq(transactions.id, edited.id));
     const [dto] = await toDtos(db, userId, [row!]);
@@ -350,11 +386,20 @@ export const transactionRoutes = new Hono<AppBindings>()
     const legs = await legsOf(db, userId, c.req.param('id'));
     if (legs.some((l) => l.type === 'trade')) fail(409, 'delete stock trades on the investments page', 'TRADE_TX');
     const ids = legs.map((l) => l.id);
-    await runBatch(db, [
-      db.update(billOccurrences).set({ status: 'pending', transactionId: null, updatedAt: now() }).where(inArray(billOccurrences.transactionId, ids)),
-      db.delete(transactionTags).where(inArray(transactionTags.transactionId, ids)),
-      db.delete(transactions).where(and(eq(transactions.userId, userId), inArray(transactions.id, ids))),
-      ...recalcOps(db, pairsOf(legs)),
-    ]);
+    const t = now();
+    try {
+      await runBatch(db, [
+        // Nothing is deleted unless the entry still has exactly these legs (see lib/entries.ts).
+        ...guardOps(db, userId, entryUnchanged(userId, legs)),
+        // Historical records linked to it go back to open (before the delete: the foreign key needs it).
+        ...releaseArchiveOps(db, userId, ids, t),
+        db.update(billOccurrences).set({ status: 'pending', transactionId: null, updatedAt: t }).where(inArray(billOccurrences.transactionId, ids)),
+        db.delete(transactionTags).where(inArray(transactionTags.transactionId, ids)),
+        db.delete(transactions).where(and(eq(transactions.userId, userId), inArray(transactions.id, ids))),
+        ...recalcOps(db, pairsOf(legs)),
+      ]);
+    } catch (err) {
+      rethrowGuard(err);
+    }
     return c.json({ ok: true, deleted: ids.length });
   });

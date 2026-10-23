@@ -695,6 +695,195 @@ test('transactions views: outflows by default, the full list one click (and one 
   }
 });
 
+test('history archive: kept out of the ledger until converted; link, convert and undo', async () => {
+  const api = async (method: string, path: string, data?: unknown) => {
+    const r = await context.request.fetch(`${BASE_URL}/api${path}`, { method, data, headers: { origin: BASE_URL, 'x-zui-csrf': '1' } });
+    expect(r.ok(), `${method} ${path}: ${r.status()}`).toBe(true);
+    return r.json();
+  };
+  const accounts = await api('GET', '/accounts');
+  const checking = accounts.find((a: any) => a.name === 'Checking');
+  const usd = async () => (await api('GET', `/accounts/${checking.id}`)).currencies.find((c: any) => c.currency === 'USD').balance as number;
+  /** Everything the ledger shows; archive records must never change it. */
+  const ledger = async () => ({
+    accounts: (await api('GET', '/accounts')).map((a: any) => a.currencies.map((c: any) => [c.currency, c.balance])),
+    totals: (await api('GET', '/dashboard')).totals,
+    stats: (await api('GET', '/stats?from=2000-01-01&to=2030-12-31')).totals,
+    outflow: (await api('GET', '/transactions?flow=outflow&pageSize=200')).total,
+  });
+  const drawer = page.getByTestId('archive-detail');
+  const rows = page.locator('.ant-table-row');
+  const save = async () => {
+    await modal(page).getByRole('button', { name: btn('保存') }).click();
+    await expect(page.locator('.ant-modal-wrap:visible')).toHaveCount(0);
+  };
+  const typeDate = async (label: string, value: string) => {
+    const d = modal(page).getByLabel(label, { exact: true });
+    await d.click();
+    await d.fill(value);
+    await d.press('Enter');
+  };
+  /** The currency select next to an amount (antd gives it the field's name as id). */
+  const pickCurrency = async (id: string, code: string) => {
+    await modal(page).locator(`input#${id}`).click();
+    await page.keyboard.type(code);
+    await page.locator('.ant-select-dropdown:visible .ant-select-item-option').filter({ hasText: new RegExp(`^${code}$`) }).click();
+  };
+  const closeDrawer = async () => {
+    await page.locator('.ant-drawer .ant-drawer-close:visible').click();
+    await expect(drawer).toBeHidden();
+  };
+  const created: string[] = [];
+  const before = await ledger();
+
+  await page.goto('/archive');
+  await expect(page.getByTestId('archive-hint')).toContainText('不计入余额');
+  await expect(page.locator('.ant-empty')).toContainText('没有待处理的档案');
+
+  // 1. Only a title: saved with an unknown date and nothing filled in.
+  await page.getByRole('button', { name: '新建档案' }).click();
+  await page.getByLabel('标题', { exact: true }).fill('ARC 旧相机');
+  await save();
+  await expect(rows.filter({ hasText: 'ARC 旧相机' })).toContainText('日期未知');
+  await expect(rows.filter({ hasText: 'ARC 旧相机' })).toContainText('金额未知');
+  await closeDrawer(); // the new record's drawer opened
+
+  // 2. A month: shown as the month, never as a day.
+  await page.getByRole('button', { name: '新建档案' }).click();
+  await page.getByLabel('标题', { exact: true }).fill('ARC 二月房租');
+  await pick(page, '记录类型', '支出');
+  await pick(page, '日期精度', '仅知月份');
+  await typeDate('日期', '2024-02');
+  await pickCurrency('currency', 'USD');
+  await page.getByLabel('金额', { exact: true }).fill('12');
+  await save();
+  const month = rows.filter({ hasText: 'ARC 二月房租' });
+  await expect(month).toContainText('2024-02');
+  await expect(month).toContainText('仅知月份');
+  await expect(month).not.toContainText('2024-02-01');
+  await expect(drawer.getByTestId('convert-blockers')).toContainText('需要精确到日的日期');
+  await expect(drawer.getByTestId('convert-blockers')).toContainText('需先标记为已核实');
+  await expect(drawer.getByRole('button', { name: /转换为正式流水/ })).toBeDisabled();
+  await closeDrawer();
+
+  // 3. An exact day with a time, verified: ready to convert. (After Checking's balance date
+  //    2025-01-01 — the conversion follows the ledger's rules, so an earlier day wouldn't count.)
+  await page.getByRole('button', { name: '新建档案' }).click();
+  await page.getByLabel('标题', { exact: true }).fill('ARC 机场出租车');
+  await pick(page, '记录类型', '支出');
+  await pick(page, '日期精度', '精确到日');
+  await typeDate('日期', '2026-03-08');
+  const time = page.getByLabel('时间', { exact: true });
+  await time.fill('0230');
+  await time.blur();
+  await expect(time).toHaveValue('02:30');
+  await pickCurrency('currency', 'USD');
+  await page.getByLabel('金额', { exact: true }).fill('5');
+  await pick(page, '账户', /Checking/);
+  await pick(page, '核实状态', '已核实');
+  await save();
+  const day = rows.filter({ hasText: 'ARC 机场出租车' });
+  await expect(day).toContainText('2026-03-08');
+  await expect(day).toContainText('02:30');
+  await expect(day).toContainText('-$5.00');
+  await shot(page, '26-archive-open');
+
+  // Nothing so far touched the ledger.
+  expect(await ledger()).toEqual(before);
+
+  // 4. Convert: one expense, booked through the ledger.
+  const usdBefore = await usd();
+  await expect(drawer.getByTestId('convert-blockers')).toHaveCount(0);
+  await drawer.getByRole('button', { name: /转换为正式流水/ }).click();
+  await page.locator('.ant-popconfirm').getByRole('button', { name: btn('确定') }).click();
+  await expect(drawer).toContainText('已转换为正式流水');
+  await expect(drawer.locator('.row-item')).toHaveCount(1);
+  await expect(drawer.locator('.row-item')).toContainText('2026-03-08 02:30');
+  expect(await usd()).toBe(usdBefore - 500);
+  const booked = (await api('GET', '/transactions?flow=all&from=2026-03-08&to=2026-03-08')).items;
+  expect(booked).toHaveLength(1);
+  // No merchant, purpose or note on the record: the title names the entry.
+  expect(booked[0]).toMatchObject({ type: 'expense', amount: -500, currency: 'USD', occurredAt: '2026-03-08', occurredTime: '02:30', verificationStatus: 'verified', note: 'ARC 机场出租车' });
+  await expect(drawer).toContainText(booked[0].id);
+  await shot(page, '27-archive-converted');
+
+  // The record leads straight to its transaction.
+  await drawer.getByRole('button', { name: /在流水页查看/ }).click();
+  await expect(page).toHaveURL(new RegExp(`/transactions\\?.*tx=${booked[0].id}`));
+  await expect(modal(page)).toContainText('编辑流水');
+  await expect(modal(page).getByLabel('备注', { exact: true })).toHaveValue('ARC 机场出租车');
+  await modal(page).getByRole('button', { name: btn('取消') }).click();
+  await expect(page.locator('.ant-modal-wrap:visible')).toHaveCount(0);
+  await expect(page).not.toHaveURL(/tx=/);
+  await expect(rows.filter({ hasText: 'ARC 机场出租车' })).toHaveCount(1);
+  await page.goto('/archive?status=converted');
+  await rows.filter({ hasText: 'ARC 机场出租车' }).click();
+
+  // Its money fields are locked; the transaction is edited instead.
+  await page.locator('.ant-drawer').getByRole('button', { name: btn('编辑') }).click();
+  await expect(modal(page).getByLabel('金额', { exact: true })).toBeDisabled();
+  await expect(modal(page)).toContainText('已锁定');
+  await modal(page).getByRole('button', { name: btn('取消') }).click();
+  await expect(page.locator('.ant-modal-wrap:visible')).toHaveCount(0);
+  await closeDrawer();
+  await expect(rows.filter({ hasText: 'ARC 机场出租车' })).toHaveCount(1);
+
+  // 5. Deleting the transaction (from the record itself) gives the record back, saying why.
+  await rows.filter({ hasText: 'ARC 机场出租车' }).click();
+  await drawer.locator('.row-item').click();
+  await modal(page).getByRole('button', { name: /删\s*除/ }).click();
+  await page.locator('.ant-popconfirm').getByRole('button', { name: btn('确定') }).click();
+  await expect(page.locator('.ant-modal-wrap:visible')).toHaveCount(0);
+  await expect(drawer).toContainText('档案已恢复为待处理');
+  await expect(drawer.locator('.row-item')).toHaveCount(0);
+  await expect(drawer.getByRole('button', { name: /转换为正式流水/ })).toBeEnabled();
+  expect(await usd()).toBe(usdBefore);
+  await closeDrawer();
+  await expect(rows.filter({ hasText: 'ARC 机场出租车' })).toHaveCount(0);
+  await page.locator('#root .ant-segmented-item').filter({ hasText: '待处理' }).click();
+  await expect(rows.filter({ hasText: 'ARC 机场出租车' })).toHaveCount(1);
+
+  // 6. Link an existing transaction: no new entry, no balance change.
+  const existing = await api('POST', '/transactions', { type: 'expense', accountId: checking.id, amount: 4200, occurredAt: dayjs().format('YYYY-MM-DD'), counterparty: 'ARC-LINK-TX' });
+  created.push(existing.id);
+  const linkedBefore = await ledger();
+  try {
+    await rows.filter({ hasText: 'ARC 旧相机' }).click();
+    await drawer.getByRole('button', { name: /关联已有流水/ }).click();
+    const picker = modal(page);
+    await picker.getByPlaceholder('搜索备注、商户、订单号').fill('ARC-LINK-TX');
+    await picker.getByPlaceholder('搜索备注、商户、订单号').press('Enter');
+    await picker.locator('.ant-table-row').filter({ hasText: 'ARC-LINK-TX' }).click();
+    await picker.getByRole('button', { name: /关联/ }).click();
+    await expect(page.locator('.ant-modal-wrap:visible')).toHaveCount(0);
+    await expect(drawer.locator('.row-item')).toContainText('ARC-LINK-TX');
+    expect(await ledger()).toEqual(linkedBefore);
+    await closeDrawer();
+
+    // 7. Filters, search and dismissing (the record is kept).
+    await page.locator('#root .ant-segmented-item').filter({ hasText: '已关联' }).click();
+    await expect(rows).toHaveCount(1);
+    await expect(rows.first()).toContainText('ARC 旧相机');
+    await page.locator('#root .ant-segmented-item').filter({ hasText: '待处理' }).click();
+    const search = page.getByPlaceholder('搜索标题、商户、用途、订单号、备注');
+    await search.fill('房租');
+    await search.press('Enter');
+    await expect(rows).toHaveCount(1);
+    await rows.first().click();
+    await drawer.getByRole('button', { name: btn('忽略') }).click();
+    await page.locator('.ant-popconfirm').getByRole('button', { name: btn('确定') }).click();
+    await expect(drawer).toContainText('已忽略');
+    await closeDrawer();
+    await expect(page.locator('.ant-empty')).toContainText('没有符合条件的档案');
+    await page.locator('#root .ant-segmented-item').filter({ hasText: '已忽略' }).click();
+    await expect(rows.filter({ hasText: 'ARC 二月房租' })).toHaveCount(1);
+  } finally {
+    // Deleting the linked transaction releases its record (it goes back to open).
+    for (const id of created) await api('DELETE', `/transactions/${id}`);
+  }
+  expect(await ledger()).toEqual(before);
+});
+
 test('changes the profile picture', async () => {
   await page.goto('/security');
   // A 2×2 PNG; the browser crops and shrinks it before saving.

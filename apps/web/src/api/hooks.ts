@@ -11,6 +11,8 @@ import type {
   CategoryDto,
   DashboardDto,
   FxDto,
+  HistoricalRecordDetailDto,
+  HistoricalRecordListDto,
   InstitutionDto,
   InvestDto,
   MeDto,
@@ -98,6 +100,23 @@ export const useTransactions = (f: TxFilters, enabled = true) =>
     placeholderData: keepPreviousData,
     enabled,
   });
+
+export interface ArchiveFilters {
+  /** Default (omitted): open records. */
+  status?: string;
+  recordType?: string;
+  datePrecision?: string;
+  verificationStatus?: string;
+  q?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+/** Historical records; their keys start with 'archive' (refreshed with the ledger, never part of it). */
+export const useArchive = (f: ArchiveFilters) =>
+  useQuery({ queryKey: ['archive', f], queryFn: () => get<HistoricalRecordListDto>(`/archive${qs({ ...f })}`), placeholderData: keepPreviousData });
+export const useArchiveRecord = (id: string | null) =>
+  useQuery({ queryKey: ['archive-record', id], queryFn: () => get<HistoricalRecordDetailDto>(`/archive/${id}`), enabled: !!id });
 
 export const usePasskeys = () => useQuery({ queryKey: ['passkeys'], queryFn: () => get<PasskeyDto[]>('/auth/passkeys') });
 export const useSessions = () => useQuery({ queryKey: ['sessions'], queryFn: () => get<SessionDto[]>('/auth/sessions') });

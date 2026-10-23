@@ -5,6 +5,7 @@ import { secureHeaders } from 'hono/secure-headers';
 import { csrfGuard, requireAuth } from './auth/middleware.ts';
 import type { AppBindings, Deps } from './env.ts';
 import { accountRoutes } from './routes/accounts.ts';
+import { archiveRoutes } from './routes/archive.ts';
 import { authRoutes } from './routes/auth.ts';
 import { billRoutes } from './routes/bills.ts';
 import { cardRoutes } from './routes/cards.ts';
@@ -37,6 +38,7 @@ export const PROTECTED_MOUNTS = {
   '/categories': categoryRoutes,
   '/tags': tagRoutes,
   '/transactions': transactionRoutes,
+  '/archive': archiveRoutes,
   '/bills': billRoutes,
   '/statements': statementRoutes,
   '/reminders': reminderRoutes,

@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { index, integer, primaryKey, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { check, index, integer, primaryKey, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 /**
  * One schema for local libsql and Cloudflare D1.
@@ -350,6 +350,97 @@ export const transactionTags = sqliteTable(
       .references(() => tags.id, { onDelete: 'cascade' }),
   },
   (t) => [primaryKey({ columns: [t.transactionId, t.tagId] }), index('tx_tags_tag_idx').on(t.tagId)],
+);
+
+/**
+ * Historical records (the archive): incomplete past money events, kept apart from the ledger.
+ * Nothing reads them for balances, net worth or statistics; they reach the ledger only by being
+ * converted into a transaction (through the transactions logic) or linked to an existing one.
+ * - Dates: see archiveDateIssue in @z-ui/shared (unknown = both null; a time needs an exact day).
+ * - Amounts are positive minor units; the direction comes from record_type.
+ * - linked_transaction_id is the linked entry (a transfer's sending leg) and unique, so one
+ *   transaction is never claimed twice. The plain foreign key makes deleting a still-linked
+ *   transaction fail: every delete path first releases the record (status back to open).
+ * - The CHECK constraints repeat the API's rules (dates, time, amounts, status ↔ link).
+ */
+export const historicalRecords = sqliteTable(
+  'historical_records',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    title: text('title').notNull(),
+    recordType: text('record_type', { enum: ['expense', 'income', 'transfer', 'investment', 'crypto', 'other', 'unknown'] }).notNull(),
+    status: text('status', { enum: ['open', 'linked', 'converted', 'dismissed'] }).notNull().default('open'),
+    datePrecision: text('date_precision', { enum: ['day', 'month', 'year', 'range', 'unknown'] }).notNull(),
+    dateFrom: text('date_from'),
+    dateTo: text('date_to'),
+    occurredTime: text('occurred_time'),
+    timeZone: text('time_zone'),
+    amount: integer('amount'),
+    currency: text('currency'),
+    accountId: text('account_id').references(() => accounts.id),
+    fromAccountId: text('from_account_id').references(() => accounts.id),
+    toAccountId: text('to_account_id').references(() => accounts.id),
+    toAmount: integer('to_amount'),
+    toCurrency: text('to_currency'),
+    assetCode: text('asset_code'),
+    /** Decimal string (no float rounding). */
+    assetQuantity: text('asset_quantity'),
+    feeAmount: integer('fee_amount'),
+    feeCurrency: text('fee_currency'),
+    /** Decimal string, informational only (never used to compute an amount). */
+    exchangeRate: text('exchange_rate'),
+    counterparty: text('counterparty'),
+    purpose: text('purpose'),
+    paymentChannel: text('payment_channel'),
+    referenceNumber: text('reference_number'),
+    evidenceSource: text('evidence_source'),
+    note: text('note'),
+    verificationStatus: text('verification_status', { enum: ['pending', 'partial', 'verified'] }).notNull().default('pending'),
+    linkedTransactionId: text('linked_transaction_id').references(() => transactions.id),
+    convertedAt: integer('converted_at'),
+    /**
+     * Set when the record went back to open because its transaction was deleted or changed to
+     * a type the record no longer fits.
+     */
+    linkLostAt: integer('link_lost_at'),
+    /**
+     * Incremented by every write (edits, status changes, links, and the ledger releasing a link).
+     * Writes are compare-and-swap on it, so a request acting on an older read changes nothing.
+     */
+    version: integer('version').notNull().default(1),
+    createdAt: ts('created_at'),
+    updatedAt: ts('updated_at'),
+  },
+  (t) => [
+    index('hist_user_status_idx').on(t.userId, t.status, t.dateFrom),
+    uniqueIndex('hist_linked_tx_uq').on(t.linkedTransactionId),
+    // Second line of defence behind the API's validation: the table itself refuses bad rows.
+    check('hist_status_ck', sql`${t.status} in ('open', 'linked', 'converted', 'dismissed')`),
+    check('hist_type_ck', sql`${t.recordType} in ('expense', 'income', 'transfer', 'investment', 'crypto', 'other', 'unknown')`),
+    check('hist_verification_ck', sql`${t.verificationStatus} in ('pending', 'partial', 'verified')`),
+    check('hist_version_ck', sql`${t.version} >= 1`),
+    check('hist_link_ck', sql`(${t.status} in ('linked', 'converted')) = (${t.linkedTransactionId} is not null)`),
+    check('hist_converted_ck', sql`(${t.status} = 'converted') = (${t.convertedAt} is not null)`),
+    // Real calendar dates only: SQLite's date() rewrites 2024-02-30 as 2024-03-01 and gives NULL
+    // for 2024-13-01, so `date(x) is x` holds only for a valid YYYY-MM-DD (given x is not NULL —
+    // `date(NULL) is NULL` is true). `is`, not `=`, so a NULL from date() fails instead of passing.
+    check(
+      'hist_date_ck',
+      sql`(${t.datePrecision} = 'unknown' and ${t.dateFrom} is null and ${t.dateTo} is null) or (${t.dateFrom} is not null and ${t.dateTo} is not null and date(${t.dateFrom}) is ${t.dateFrom} and date(${t.dateTo}) is ${t.dateTo} and ${t.dateFrom} <= ${t.dateTo} and ((${t.datePrecision} = 'day' and ${t.dateTo} = ${t.dateFrom}) or (${t.datePrecision} = 'month' and substr(${t.dateFrom}, 9, 2) = '01' and ${t.dateTo} is date(${t.dateFrom}, '+1 month', '-1 day')) or (${t.datePrecision} = 'year' and substr(${t.dateFrom}, 6, 5) = '01-01' and ${t.dateTo} is substr(${t.dateFrom}, 1, 4) || '-12-31') or ${t.datePrecision} = 'range'))`,
+    ),
+    // A time ("HH:mm") or zone only with an exact day.
+    check(
+      'hist_time_ck',
+      sql`(${t.occurredTime} is null and ${t.timeZone} is null) or (${t.datePrecision} = 'day' and (${t.occurredTime} is null or (length(${t.occurredTime}) = 5 and ${t.occurredTime} glob '[0-2][0-9]:[0-5][0-9]' and ${t.occurredTime} <= '23:59')))`,
+    ),
+    // Amounts are whole minor units with their currency; a fee may be 0 (known: none).
+    check('hist_amount_ck', sql`${t.amount} is null or (typeof(${t.amount}) = 'integer' and ${t.amount} > 0 and ${t.currency} is not null)`),
+    check('hist_to_amount_ck', sql`${t.toAmount} is null or (typeof(${t.toAmount}) = 'integer' and ${t.toAmount} > 0 and ${t.toCurrency} is not null)`),
+    check('hist_fee_ck', sql`${t.feeAmount} is null or (typeof(${t.feeAmount}) = 'integer' and (${t.feeAmount} = 0 or (${t.feeAmount} > 0 and ${t.feeCurrency} is not null)))`),
+  ],
 );
 
 export const bills = sqliteTable(

@@ -58,7 +58,7 @@ const DETAIL_FIELDS = ['occurredTime', 'timeZone', 'purpose', 'paymentChannel', 
  * ever made from it, so the browser's date and zone (DST gaps included) can't change it. On blur a
  * loose entry ("930", "9:30") is tidied to "09:30"; anything else is left for the validator.
  */
-function TimeOfDayInput({ value, onChange, ...rest }: Omit<InputProps, 'value' | 'onChange'> & { value?: string; onChange?: (v: string) => void }) {
+export function TimeOfDayInput({ value, onChange, ...rest }: Omit<InputProps, 'value' | 'onChange'> & { value?: string; onChange?: (v: string) => void }) {
   return (
     <Input
       {...rest}
@@ -79,7 +79,7 @@ function TimeOfDayInput({ value, onChange, ...rest }: Omit<InputProps, 'value' |
 const hasDetails = (tx: TransactionDto | null | undefined) => !!tx && DETAIL_FIELDS.some((k) => !!tx[k]);
 
 /** IANA zones known to the browser; the browser's own zone first. */
-function timeZoneOptions(current?: string | null) {
+export function timeZoneOptions(current?: string | null) {
   let zones: string[] = [];
   try {
     zones = Intl.supportedValuesOf('timeZone');
