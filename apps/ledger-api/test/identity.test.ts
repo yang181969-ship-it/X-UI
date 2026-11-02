@@ -19,6 +19,8 @@ import { defaultDbPath, legacyDbPaths, REPO_ROOT } from '../src/node.ts';
 import { dirFingerprint, withDbDir } from './helpers.ts';
 
 const url = (dir: string, name = 'x-ui-v1.db') => `file:${join(dir, name)}`;
+/** Every v1 migration (0000 M1 auth, 0001 M2 accounts, …). */
+const MIGRATION_COUNT = (JSON.parse(readFileSync(join(MIGRATIONS_DIR, 'meta/_journal.json'), 'utf8')) as { entries: unknown[] }).entries.length;
 
 async function tables(dir: string, name: string, track: <C extends ReturnType<typeof createClient>>(c: C) => C) {
   const c = track(createClient({ url: url(dir, name) }));
@@ -42,7 +44,7 @@ describe('first start and restarts', () => {
       const first = await openV1Db(url(dir), { legacyPaths: [], now: () => 1_700_000_000_000 });
       track(first.client);
       expect(first.identity).toBe('empty');
-      expect(first.applied).toBe(1);
+      expect(first.applied).toBe(MIGRATION_COUNT);
       const meta = await first.client.execute(`SELECT key, value, created_at FROM ${META_TABLE}`);
       expect(meta.rows.map((r) => [r.key, r.value, Number(r.created_at)])).toEqual([[IDENTITY_KEY, IDENTITY_VALUE, 1_700_000_000_000]]);
       first.client.close();
@@ -51,9 +53,11 @@ describe('first start and restarts', () => {
       expect(names).toContain(MIGRATIONS_TABLE);
       expect(names).toContain(META_TABLE);
       expect(names).not.toContain(LEGACY_MIGRATIONS_TABLE);
-      // Only auth/settings tables in M1 — no ledger tables copied from the legacy schema.
+      // M1 auth/settings tables plus the eight M2 tables — nothing copied from the legacy schema.
       expect(names.filter((n) => !n.startsWith('_') && n !== META_TABLE).sort()).toEqual(
-        ['audit_log', 'auth_challenges', 'login_attempts', 'passkeys', 'recovery_codes', 'sessions', 'settings', 'users'].sort(),
+        ['audit_log', 'auth_challenges', 'login_attempts', 'passkeys', 'recovery_codes', 'sessions', 'settings', 'users']
+          .concat(['user_preferences', 'institutions', 'accounts', 'account_currencies', 'cards', 'account_card_links', 'payment_channels', 'payment_channel_sources'])
+          .sort(),
       );
     }));
 
@@ -66,7 +70,7 @@ describe('first start and restarts', () => {
         expect(again.identity).toBe('v1');
         expect(again.applied).toBe(0);
         const log = await again.client.execute(`SELECT count(*) AS n FROM ${MIGRATIONS_TABLE}`);
-        expect(Number(log.rows[0]!.n)).toBe(1);
+        expect(Number(log.rows[0]!.n)).toBe(MIGRATION_COUNT);
         const meta = await again.client.execute(`SELECT created_at FROM ${META_TABLE}`);
         expect(meta.rows.map((r) => Number(r.created_at))).toEqual([111]);
         again.client.close();
@@ -81,7 +85,7 @@ describe('first start and restarts', () => {
       const opened = await openV1Db(url(dir), { legacyPaths: [] });
       track(opened.client);
       expect(opened.identity).toBe('v1');
-      expect(opened.applied).toBe(1);
+      expect(opened.applied).toBe(MIGRATION_COUNT);
     }));
 
   it('starts over after a first start that stopped with only an empty migration log', () =>
@@ -92,7 +96,7 @@ describe('first start and restarts', () => {
       const opened = await openV1Db(url(dir), { legacyPaths: [] });
       track(opened.client);
       expect(opened.identity).toBe('empty');
-      expect(opened.applied).toBe(1);
+      expect(opened.applied).toBe(MIGRATION_COUNT);
     }));
 
   it('accepts an existing zero-byte file as a fresh database', () =>

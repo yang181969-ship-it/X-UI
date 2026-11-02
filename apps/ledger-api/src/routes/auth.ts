@@ -49,7 +49,9 @@ export async function meDto(c: C, user: UserRow, session: SessionRow): Promise<M
 async function guardLocked(c: C, keys: string[]) {
   const until = await lockedUntil(c.var.deps.db, keys, c.var.deps.now());
   if (until) {
-    await audit(c, 'login.locked', { keys }, null);
+    // Only which limits were checked ('user' / 'ip'), never the key values: the user key holds
+    // the typed username, which may be a mistyped password.
+    await audit(c, 'login.locked', { scopes: keys.map((k) => k.slice(0, k.indexOf(':'))) }, null);
     fail(429, 'too many failed attempts, try again later', 'LOCKED', { until });
   }
 }
@@ -65,7 +67,7 @@ export const authRoutes = new Hono<AppBindings>()
   .post('/login', async (c) => {
     const input = await body(c, loginSchema);
     const { db, env, now } = c.var.deps;
-    const keys = [userKey(input.username), ipKey(c.var.ip)];
+    const keys = [await userKey(env.SESSION_PEPPER, input.username), ipKey(c.var.ip)];
     await guardLocked(c, keys);
     if (c.var.deps.limiter && !(await c.var.deps.limiter(`login:${c.var.ip}`))) fail(429, 'too many attempts', 'RATE_LIMITED');
 
@@ -82,7 +84,9 @@ export const authRoutes = new Hono<AppBindings>()
       const t = now();
       await recordFailure(db, keys[0]!, USER_MAX, t);
       await recordFailure(db, keys[1]!, IP_MAX, t);
-      await audit(c, 'login.failure', { username: input.username, via: 'password' }, user?.id ?? null);
+      // Never the typed username: a password entered in the username box would land in the log.
+      // An existing account is identified by user_id; time and IP are on every audit row.
+      await audit(c, 'login.failure', { via: 'password' }, user?.id ?? null);
       fail(401, 'incorrect username, password or code', 'BAD_CREDENTIALS');
     }
     await clearFailures(db, keys[0]!);
@@ -158,7 +162,7 @@ export const authRoutes = new Hono<AppBindings>()
 
   .post('/step-up/totp', async (c) => {
     const { code } = await body(c, totpConfirmSchema);
-    const keys = [userKey(c.var.user.username)];
+    const keys = [await userKey(c.var.deps.env.SESSION_PEPPER, c.var.user.username)];
     await guardLocked(c, keys);
     if (!(await checkTotp(c.var.deps, c.var.user, code))) {
       await recordFailure(c.var.deps.db, keys[0]!, USER_MAX, c.var.deps.now());

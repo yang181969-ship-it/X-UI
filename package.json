@@ -30,8 +30,8 @@
     "start:v1": "npm run start -w @xui/ledger-api",
     "db:generate:v1": "npm run db:generate -w @xui/ledger-api",
     "db:migrate:v1": "npm run db:migrate -w @xui/ledger-api",
-    "typecheck:v1": "tsc -p apps/ledger-api && tsc -p apps/ledger-web",
-    "lint:v1": "oxlint apps/ledger-api apps/ledger-web",
+    "typecheck:v1": "tsc -p packages/ledger-shared && tsc -p apps/ledger-api && tsc -p apps/ledger-web",
+    "lint:v1": "oxlint packages/ledger-shared apps/ledger-api apps/ledger-web",
     "test:v1": "vitest run --config apps/ledger-api/vitest.config.ts"
   },
   "devDependencies": {

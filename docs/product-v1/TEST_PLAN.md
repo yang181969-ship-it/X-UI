@@ -1,6 +1,6 @@
 # X-UI Product v1 — 测试计划（TEST_PLAN）
 
-> 状态：§1 为 M1 已有测试；**§2 起为 M2 测试设计（M2-A 修订版），尚未实现**。
+> 状态：§1 为 M1 已有测试；**§2 起为 M2 测试设计（M2-A 修订版）；§3.12 的数据库用例、R-2、R-3、R-5、A-12（schema 与服务层）、H-3（数据库层）、D-3 已在 M2-B1 实现**，API 用例尚未实现。
 > 相关文档：[PRODUCT_SPEC.md](PRODUCT_SPEC.md) · [DATA_MODEL.md](DATA_MODEL.md) · [API_SPEC.md](API_SPEC.md)
 
 ## 0. 运行方式与准入标准
@@ -60,6 +60,7 @@ M2-B 完成标准：
 | A-8 | 账户类型 | `credit`、`investment`、`cash` → 400；原始 SQL 插入 `credit` → CHECK 失败；`depositKind` 仅 `bank` 允许 |
 | A-9 | 账号尾号 | `1234`、`AB12` 成功；`12345`、完整 IBAN、带空格或符号 → 400 / CHECK 失败 |
 | A-10 | 删除账户 | 级联删除币种、关联、渠道来源；被渠道用作余额账户 → 409 `IN_USE` |
+| A-12 | `institution_id` 不可修改 | `PATCH /accounts/:id { institutionId }`（单独或与其他字段一起）→ 400 `VALIDATION`，账户不变；schema 中没有 `institutionId`；服务层 `accountPatchValues` 生成的更新列中没有 `institution_id`；绕过服务层的 ORM 更新与原始 SQL `UPDATE … SET institution_id`（单行、多列、批量、batch）→ 触发器 `ACCOUNT_INSTITUTION_IMMUTABLE` 失败且行不变，更新其他列与设为相同值正常，删除用户的级联清理不受影响（SQLite 与 D1） |
 | A-11 | 级联与 NO ACTION 共存 | 删除带币种范围关联的账户成功（语句结束时无残留引用）；删除用户时级联删除其全部 M2 数据成功 |
 
 ### 3.3 银行卡
@@ -71,7 +72,7 @@ M2-B 完成标准：
 | C-3 | 禁止敏感字段 | 请求体带 `pan`、`cardNumber`、`bin`、`cvv`、`cvc`、`pin`、`holderName` 中任一 → 400 `VALIDATION`，数据库无新增行 |
 | C-4 | 后四位 | `0042` 成功；`42`、`12345`、`abcd` → 400；原始 SQL → CHECK 失败 |
 | C-5 | 无卡号列 | `schemaColumns` 中不存在 `pan`、`pan_enc`、`bin`、`bin_info`、`cvv`、`pin`、`holder_name`、`account_id`（cards 表） |
-| C-6 | 有效期 | `2028-07` 成功；`2028-13`、`07/28` → 400；`expiringWithinDays` 筛选正确 |
+| C-6 | 有效期 | `2028-01`、`2028-07`、`2028-12` 成功；`2028-00`、`2028-13`、`2028-1`、`07/28` → 400；原始 SQL（SQLite 与 D1）对 `2028-00`、`2028-13`、`2028-1` → CHECK 失败；`expiringWithinDays` 筛选正确 |
 | C-7 | 预付卡自动建储值账户 | 一次请求创建卡 + `stored_value` 账户 + 默认币种 + `spending_source` 默认关联；`accountCountry` 缺省 → 400 且**卡和账户都未创建**；对借记卡传 `createStoredValueAccount` → 400 |
 
 ### 3.4 银行卡-账户关联
@@ -115,7 +116,7 @@ M2-B 完成标准：
 | ID | 场景 | 断言 |
 |---|---|---|
 | P-1 | 渠道类型 | `device_wallet`、`payment_service`、`other` 成功；`bank_transfer` → 400；原始 SQL 插入 `bank_transfer` → CHECK 失败 |
-| P-2 | 余额账户 | 仅 `payment_service` 可设；账户类型须为 `e_money` / `stored_value`；同一账户被第二个渠道使用 → 409；原始 SQL → 唯一约束失败 |
+| P-2 | 余额账户 | 仅 `payment_service` 可设；账户类型须为 `e_money` / `stored_value`（API 400 `BALANCE_ACCOUNT_KIND`；原始 SQL 的 INSERT、UPDATE 渠道以及把余额账户改为其他类型 → 触发器 `BALANCE_ACCOUNT_KIND` 失败，SQLite 与 D1）；同一账户被第二个渠道使用 → 409；原始 SQL → 唯一约束失败 |
 | P-3 | 来源 | Apple Pay（`device_wallet`）挂两张卡成功，挂账户 → 400 `CHANNEL_SOURCE_KIND`；PayPal 挂卡与账户均成功 |
 | P-4 | 来源 XOR | 原始 SQL 同时填 `card_id` 与 `account_id`，或都不填 → CHECK 失败 |
 | P-5 | 重复来源与默认 | 同渠道同来源第二条有效记录 → 409；默认唯一；结束来源清除默认 |
@@ -147,6 +148,7 @@ M2-B 完成标准：
 |---|---|---|
 | H-1 | `home_region` 默认值 | 未设置时 `GET /settings/profile` → `CN` |
 | H-2 | 修改 | `PATCH` 为 `HK` 后读取为 `HK`；`hk`、`CHN` → 400 |
+| H-3 | 每个用户独立 | 用户 A 改为 `HK` 后用户 B 仍为 `CN`（或其自己的值）；`settings` 中不出现 `home_region`；数据库层：每用户一行、默认 `CN`、CHECK、外键（SQLite 与 D1） |
 
 （M3 的快照与历史不变性测试见 §5。）
 
@@ -156,7 +158,8 @@ M2-B 完成标准：
 |---|---|---|
 | R-1 | 鉴权覆盖 | 所有新增路由在未登录时 401；缺 CSRF 头或错误 Origin → 403（沿用 M1 的路由遍历测试，自动包含新路由） |
 | R-2 | 迁移 | M1 数据库启动后应用 `0001`；再次启动应用 0 个迁移；旧版数据库仍被拒绝且字节不变 |
-| R-3 | 部分索引生效 | 通过 `sqlite_master` 确认各部分唯一索引与 CHECK 存在（防止 drizzle-kit 生成遗漏） |
+| R-3 | 部分索引生效 | 通过 `sqlite_master` 确认各部分唯一索引、CHECK 与触发器存在（防止 drizzle-kit 生成遗漏） |
+| R-5 | 迁移生成保护 | `migrations-guard.test.ts` 扫描所有 v1 迁移：引号标识符（拒绝 `` `ifnull("col"` `` 之类）、表达式索引、括号、空语句、journal / SQL / 快照一致、wrangler 拆分与 drizzle 一致、整条链在空库执行且必需触发器存在；自测用 drizzle-kit 的原始错误输出确认能被拒绝 |
 | R-4 | 旧版回归 | `npm test`（旧版）全部通过 |
 
 ### 3.11 关闭、删除与历史数据
@@ -165,10 +168,12 @@ M2-B 完成标准：
 |---|---|---|
 | D-1 | 关闭账户后关联保留 | W 有 K 的默认关联；W 改为 `closed` → 关联的 `status`、`is_default` 不变，账户详情与卡详情仍列出该关联；`spending-source` 不再推荐 W（S-7）；W 恢复 `active` → 重新被推荐 |
 | D-2 | 关闭币种、冻结卡后关联保留 | 同 D-1，分别对账户币种 `closed`、银行卡 `frozen` 验证：关联不变、不再推荐、恢复后重新推荐 |
-| D-3 | 删除用户的级联清理 | 用户 A、B 各有完整 M2 数据（机构、多币种账户、卡、关联、渠道、来源、`settings`）与认证数据（会话、Passkey、恢复码、审计）。原始 SQL `DELETE FROM users WHERE id = A` 成功（v1 无删除用户接口）；A 在**每张**表中的行数为 0；B 的行数与删除前一致；`PRAGMA foreign_key_check` 为空 |
+| X-6 | 登录失败不记录输入原文 | 用唯一字符串作为用户名（及密码、恢复码）触发 `login.failure` 与 `login.locked`：`audit_log` 中不出现该字符串（含小写形式与其中段）；失败事件仍记录（`{ via }`、时间、IP，已存在账户带 `user_id`），锁定事件只含 `{ scopes }` |
+| X-7 | 限流键脱敏、行为不变 | `login_attempts` 中不出现输入的用户名（含大小写变体与中段），用户键等于独立计算的 `HMAC-SHA256(pepper, label + 小写用户名)`，登录与 step-up 写同一个键；行为测试（只经 HTTP 与时钟，不依赖键格式）在旧实现与新实现上都通过：4 次失败不锁定、成功登录清零、5 次锁定且正确凭据也被拒、15 分钟后解锁、大小写合并计数、窗口过期重新计数、不同用户互不影响、未知用户名同样限流、IP 30 次锁定且其他 IP 不受影响、step-up 失败计入同一用户名限额 |
+| D-3 | 删除用户的级联清理 | 用户 A、B 各有完整 M2 数据（机构、多币种账户、卡、关联、渠道、来源、`user_preferences`）与认证数据（会话、Passkey、恢复码、审计）。原始 SQL `DELETE FROM users WHERE id = A` 成功（v1 无删除用户接口）；A 在**每张带 `user_id` CASCADE 外键的表**中行数为 0；`audit_log` 中 A 的记录按保留策略原样保留（DATA_MODEL §6.1），且经真实认证流程写入的审计记录不含任何凭证；B 的行数与删除前一致；`PRAGMA foreign_key_check` 为空 |
 | D-4 | 余额渠道引用的账户不能删除 | PayPal 渠道的余额账户 → `DELETE /accounts/:id` 409 `IN_USE`（`details.references` 指出渠道）；原始 SQL 删除 → 外键失败；解除余额账户后可删除 |
 | D-5 | 历史流水引用的账户不能删除 | **M3 实现**：被 Entry 引用的账户、账户币种、银行卡、支付渠道 → 409 `IN_USE`；原始 SQL 删除 → 外键失败（M3-6） |
-| D-6 | 修改 `home_region` 不改写数据 | M2：`PATCH /settings/profile` 前后，除 `settings` 中 `profile.home_region` 一行外，所有表内容一致。M3：已有 Event 的 `home_region` 快照不变（M3-3） |
+| D-6 | 修改 `home_region` 不改写数据 | M2：`PATCH /settings/profile` 前后，除 `user_preferences` 中当前用户一行外，所有表内容一致。M3：已有 Event 的 `home_region` 快照不变（M3-3） |
 | D-7 | 修改账户国家不改写数据 | M2：`PATCH /accounts/:id { accountCountry }` 前后，除该账户行外所有表内容一致。M3：已有 Entry 的 `funding_account_country` 快照与统计不变（M3-2） |
 
 ### 3.12 SQLite 与 D1 双环境约束测试

@@ -24,7 +24,7 @@ X-UI 是 **Personal Global Finance Ledger（私人境外金融活动账本）**�
 | D11 | Wise 等多币种服务默认建模为**一个多币种账户**。 |
 | D12 | 解除银行卡关联默认"结束"并保留历史；"删除"仅用于纠正误录。 |
 | D13 | 预付卡可在创建时自动创建对应的储值账户，并作为其消费资金来源。 |
-| D14 | 用户本国地区 `home_region` 默认 `CN`，可在设置中修改。 |
+| D14 | 用户本国地区 `home_region` 默认 `CN`，可在设置中修改；每个用户独立保存（`user_preferences`），不是全局设置。 |
 | D15 | 不开发成员角色；所有数据仍按 `user_id` 隔离。 |
 | D16 | v1 共享代码放在新包 `@xui/ledger-shared`，不修改旧版 `@z-ui/shared`。 |
 | D17 | M3 历史流水以交易发生时的快照为准，不依据当前关联关系重算（详见 §6）。 |
@@ -61,7 +61,7 @@ X-UI 是 **Personal Global Finance Ledger（私人境外金融活动账本）**�
 | `cards.issuing_country` | 发卡国家 | 仅展示 |
 | `payment_channels.region` | 支付服务账户的注册地区（可空） | 仅展示 |
 | merchant country | 商户所在地（M3，属于流水） | M3 判断 |
-| `home_region` | 用户本国地区（设置，默认 CN） | M3 判断"境外" |
+| `home_region` | 用户本国地区（每个用户的个人设置，默认 CN） | M3 判断"境外" |
 
 `account_country` 的判定规则：
 

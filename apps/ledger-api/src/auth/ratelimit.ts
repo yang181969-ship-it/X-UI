@@ -1,6 +1,8 @@
 import { eq, inArray } from 'drizzle-orm';
 import type { DB } from '../db/client.ts';
 import { loginAttempts } from '../db/schema.ts';
+import { hmacSha256 } from '../lib/crypto.ts';
+import { bytesToHex } from '../lib/encoding.ts';
 
 /**
  * Failed-login throttling stored in the database (works the same on D1).
@@ -12,7 +14,18 @@ export const LOCK_MS = 15 * 60_000;
 export const USER_MAX = 5;
 export const IP_MAX = 30;
 
-export const userKey = (username: string) => `user:${username.toLowerCase()}`;
+/**
+ * Per-username throttle key: user:<hex HMAC-SHA256(pepper, label + lower-cased username)>.
+ * The table never holds what was typed — a password entered in the username box would otherwise
+ * sit in login_attempts in plain text. Same normalization as before (lower case), so the same
+ * names share one counter; the label keeps this HMAC apart from other uses of the pepper.
+ * Rotating SESSION_PEPPER resets the per-username counters (they expire within WINDOW_MS anyway).
+ */
+export async function userKey(pepper: string, username: string): Promise<string> {
+  return `user:${bytesToHex(await hmacSha256(pepper, `${USER_KEY_LABEL}${username.toLowerCase()}`))}`;
+}
+export const USER_KEY_LABEL = 'x-ui-v1/login-attempts/user:';
+/** IP keys stay readable: the IP is not a credential (it is also stored on audit rows and sessions). */
 export const ipKey = (ip: string | null) => `ip:${ip ?? 'unknown'}`;
 
 /** Returns the epoch ms until which any of the keys is locked, or null. */

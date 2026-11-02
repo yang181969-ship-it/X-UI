@@ -1,7 +1,7 @@
 import { drizzle } from 'drizzle-orm/d1';
 import { createApp } from './app.ts';
 import type { DB } from './db/client.ts';
-import { IDENTITY_KEY, IDENTITY_VALUE, LEGACY_MIGRATIONS_TABLE, META_TABLE } from './db/identity.ts';
+import { assertD1Identity } from './db/d1-identity.ts';
 import * as schema from './db/schema.ts';
 import { readEnv } from './env.ts';
 
@@ -27,19 +27,8 @@ export interface Env {
 
 let instance: Promise<ReturnType<typeof createApp>> | null = null;
 
-async function assertIdentity(d1: D1) {
-  const tables = await d1.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all<{ name: string }>();
-  const names = new Set(tables.results.map((r: { name: string }) => r.name));
-  const marker = names.has(META_TABLE)
-    ? await d1.prepare(`SELECT value FROM ${META_TABLE} WHERE key = ?`).bind(IDENTITY_KEY).first<string>('value')
-    : null;
-  if (marker !== IDENTITY_VALUE || names.has(LEGACY_MIGRATIONS_TABLE)) {
-    throw new Error('[x-ui v1] the bound D1 database is not an X-UI v1 database; refusing to serve');
-  }
-}
-
 async function boot(env: Env) {
-  await assertIdentity(env.DB);
+  await assertD1Identity(env.DB);
   // drizzle's D1 driver exposes the same query API as the libsql one used locally.
   const db = drizzle(env.DB, { schema }) as unknown as DB;
   const limiter = env.AUTH_LIMITER;

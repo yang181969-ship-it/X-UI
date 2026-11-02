@@ -1,6 +1,6 @@
 # X-UI Product v1 — 数据模型（DATA_MODEL）
 
-> 状态：M1 表已实现；**M2 表为设计（M2-A 修订版），尚未创建**。
+> 状态：M1 表已实现；**M2 表已由迁移 `0001_m2_accounts` 实现（M2-B1，含 B1 加固：`user_preferences`、审计保留策略、`expires_on`、余额账户触发器），M2 API 尚未实现**。
 > 相关文档：[PRODUCT_SPEC.md](PRODUCT_SPEC.md) · [API_SPEC.md](API_SPEC.md) · [TEST_PLAN.md](TEST_PLAN.md)
 
 ## 1. 通用约定
@@ -23,13 +23,21 @@
 | `users`、`passkeys`、`sessions`、`recovery_codes`、`login_attempts`、`auth_challenges`、`audit_log` | 认证，与旧版结构兼容 |
 | `settings` | 键值设置（`key` 主键，`value` JSON，`updated_at`） |
 
-M2 使用 `settings` 保存 `home_region`：
+`settings` 只保存实例级（全局）设置，**不保存任何用户个人设置**。用户的 `home_region` 保存在 `user_preferences`（§3.0），每个用户独立。
 
-| key | value | 缺省 |
-|---|---|---|
-| `profile.home_region` | JSON 字符串，ISO alpha-2，如 `"CN"` | 记录不存在时视为 `"CN"` |
+`audit_log` 保持 M1 结构不变（`user_id` 无外键），其保留策略见 §6.1。
 
 ## 3. M2 表定义
+
+### 3.0 `user_preferences` 用户个人设置
+
+| 字段 | 类型 | 空 | 默认 | 约束 / 说明 |
+|---|---|---|---|---|
+| user_id | text | 否 | | 主键；→ users（CASCADE） |
+| home_region | text | 否 | `'CN'` | 用户本国地区，ISO alpha-2；`CHECK(home_region GLOB '[A-Z][A-Z]')` |
+| created_at, updated_at | integer | 否 | | |
+
+每个用户至多一行；没有记录时按默认值（`CN`）处理，首次修改时创建。修改只影响之后新建的 M3 流水（M3 保存快照），不回写历史。
 
 ### 3.1 `institutions` 金融机构
 
@@ -73,6 +81,8 @@ M2 使用 `settings` 保存 `home_region`：
 
 **明确不存在的字段**：`balance`、`opening_balance`、`balance_date`、`credit_limit`、`include_in_total`、任何金额字段、完整账号。
 
+**`institution_id` 创建后不可修改**：`PATCH /accounts/:id` 不接受 `institutionId`（未知字段 → 400 `VALIDATION`，服务层 `accountPatchValues` 只写入允许的列）；数据库触发器 `accounts_institution_immutable`（`BEFORE UPDATE OF institution_id`，值确有变化时 `RAISE(ABORT, 'ACCOUNT_INSTITUTION_IMMUTABLE: …')`）兜底，绕过服务层的 ORM 或原始 SQL 更新同样被拒绝（SQLite 与 D1 均验证）。删除（包括删除用户时的级联删除）不是更新，不受影响。开户法律实体发生变化时创建新账户，历史流水继续指向旧账户。
+
 `account_country` 判定规则（冻结）：以账户协议与实际开户实体为依据；不是合作银行存放资金的地点；不从机构总部、银行卡发行国家、币种收款账户信息推断；一个账户只有一个值；开户实体变更时新建账户而非改写旧账户。
 
 ### 3.3 `account_currencies` 账户支持的币种
@@ -105,7 +115,7 @@ API 保证：每个账户至少一个币种，恰好一个默认币种（且为 
 | form | text | 否 | `'physical'` | `CHECK IN ('physical','virtual')` |
 | last4 | text | 否 | | `CHECK(last4 GLOB '[0-9][0-9][0-9][0-9]')` |
 | issuing_country | text | 否 | | ISO alpha-2；仅展示，**不得用于推断资金所在地** |
-| expires_on | text | 是 | | `YYYY-MM`；`CHECK(expires_on IS NULL OR expires_on GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]')` |
+| expires_on | text | 是 | | `YYYY-MM`，月份 01–12；`CHECK(expires_on IS NULL OR expires_on GLOB '[0-9][0-9][0-9][0-9]-0[1-9]' OR expires_on GLOB '[0-9][0-9][0-9][0-9]-1[0-2]')` |
 | status | text | 否 | `'active'` | `CHECK IN ('active','frozen','closed')` |
 | notes | text | 是 | | ≤1000，敏感扫描 |
 | sort | integer | 否 | 0 | |
@@ -163,7 +173,12 @@ API 保证：每个账户至少一个币种，恰好一个默认币种（且为 
 
 索引：`UNIQUE(id, user_id)`；`UNIQUE(user_id, name_key)`；`UNIQUE(balance_account_id) WHERE balance_account_id IS NOT NULL`；`INDEX(user_id, status)`。
 
-API 规则：余额账户的 `account_type` 须为 `e_money` 或 `stored_value`。
+余额账户的 `account_type` 须为 `e_money` 或 `stored_value`：API 校验（400 `BALANCE_ACCOUNT_KIND`），数据库由三个触发器兜底（SQLite 与 D1 均验证）：
+- `payment_channels_balance_kind_insert`：INSERT 渠道时检查；
+- `payment_channels_balance_kind_update`：UPDATE 渠道的 `balance_account_id` 或 `user_id` 时检查；
+- `accounts_balance_kind_update`：被用作余额账户的账户不能改为其他类型（先解除余额账户）。
+
+违反时 `RAISE(ABORT, 'BALANCE_ACCOUNT_KIND: …')`。账户不存在或属于其他用户时触发器不触发，由复合外键拒绝。
 
 转账方式（SWIFT、FPS、SEPA 等）不是支付渠道，属于 M3 交易模型。
 
@@ -190,6 +205,7 @@ API 规则：`device_wallet` 的来源只能是银行卡。
 
 | 子表 | 子列 | 父表（唯一键） | ON DELETE |
 |---|---|---|---|
+| user_preferences | user_id | users(id) | CASCADE |
 | institutions | user_id | users(id) | CASCADE |
 | accounts | (institution_id, user_id) | institutions(id, user_id) | NO ACTION |
 | account_currencies | (account_id, user_id) | accounts(id, user_id) | CASCADE |
@@ -215,7 +231,7 @@ API 规则：`device_wallet` 的来源只能是银行卡。
   - 银行卡：级联删除其关联、渠道来源；M3 起被流水引用时不可删除 → 关闭。
   - 账户币种：被关联引用时不可删除 → 关闭该币种。
   - 支付渠道：级联删除其来源；M3 起被流水引用时不可删除 → 归档。
-  - 用户：v1 不提供删除用户的接口；在数据库层删除用户时，按本矩阵级联清理该用户的全部子记录（认证表与 M2 表），不影响其他用户，且删除后 `PRAGMA foreign_key_check` 为空（TEST_PLAN D-3）。
+  - 用户：v1 不提供删除用户的接口；在数据库层删除用户时，所有带 `user_id → users(id) ON DELETE CASCADE` 的表（认证表、`user_preferences` 与 M2 表）中该用户的记录全部级联删除，不影响其他用户，且删除后 `PRAGMA foreign_key_check` 为空；`audit_log` 按 §6.1 保留（TEST_PLAN D-3）。
 - 关闭与删除的区别：
   - 关闭/冻结账户、关闭账户币种、冻结/关闭银行卡**不修改任何关联**（状态与默认标记保留，历史可查），只是这些来源不再被推荐（§5）；恢复有效后重新可被推荐。
   - 删除只用于没有历史意义的记录；被余额渠道或（M3 起）历史流水引用的账户不能删除。
@@ -287,6 +303,15 @@ rank := is_default DESC,
 3. 表结构中不存在 PAN、BIN、CVV、PIN、持卡人姓名、完整账号、余额相关列（由测试扫描 schema 保证）。
 4. 不记录请求体日志；审计日志 detail 只含 id 与后四位。
 
+### 6.1 审计日志保留策略
+
+- `audit_log` 是独立的安全记录，表结构沿用 M1、不做修改；`user_id` 不设外键。
+- **删除用户不删除其审计记录**：记录保留原 `user_id`（此后指向已不存在的用户），用于事后追查；不随用户、账户、银行卡等业务数据级联删除。
+- v1 不自动清理审计记录；如需清理，只能作为单独的运维操作，不属于任何业务删除流程。
+- 内容限制：只记录动作、相关 id、后四位、名称等非敏感信息与 IP；**不得包含**密码、TOTP 密钥或验证码、恢复码、会话令牌、加密密钥、PAN / CVV / PIN 或请求体（测试：`audit-retention.test.ts`）。
+- 登录相关事件**不记录用户输入的原文**：`login.failure` 只记录 `{ via }`，已存在的账户通过 `user_id` 标识；`login.locked` 只记录触发的限制范围 `{ scopes: ['user', 'ip'] }`，不记录限流键的值（用户键含输入的用户名，可能是误输入的密码）。时间与 IP 由每条审计记录自带（测试：`audit-retention.test.ts` 用唯一的"金丝雀"字符串作为用户名验证）。
+- 登录限流表 `login_attempts`（M1 表，结构不变）的按用户名计数键为 `user:<hex HMAC-SHA256(SESSION_PEPPER, "x-ui-v1/login-attempts/user:" + 小写用户名)>`，不保存输入的用户名原文；IP 计数键仍为 `ip:<IP>`（IP 不是凭证）。规范化（小写）、阈值（用户名 5 次 / IP 30 次）、15 分钟窗口与 15 分钟锁定均不变；轮换 `SESSION_PEPPER` 会重置按用户名的计数。
+
 ## 7. ER 图
 
 ```mermaid
@@ -295,7 +320,7 @@ erDiagram
   users ||--o{ accounts : owns
   users ||--o{ cards : owns
   users ||--o{ payment_channels : owns
-  users ||--o| settings : "profile.home_region"
+  users ||--o| user_preferences : "home_region"
 
   institutions ||--o{ accounts : "opens (required)"
   institutions ||--o{ cards : "issues (required)"
@@ -426,7 +451,8 @@ M3 的具体表名与其余字段在 M3 设计时确定；以下是 M2 对 M3 �
 
 ## 9. 迁移与实现注意
 
-- 新迁移 `0001_m2_accounts.sql`（drizzle-kit 生成）只新建 §3 的七张表，不修改 M1 表；仍经过 M1 的身份检查，只在 v1 数据库上执行。
+- 迁移 `0001_m2_accounts.sql` 只新建 §3 的八张表（含 `user_preferences`）、其索引与四个触发器（§3.6 的三个余额账户触发器、§3.2 的 `accounts_institution_immutable`），不修改 M1 表；仍经过 M1 的身份检查，只在 v1 数据库上执行。
+- drizzle-kit 0.31 会把表达式索引列 `ifnull("col", '')` 拆开并加引号（"no such column"），且不支持触发器：0001 在生成后手工修正，文件头注明修改内容。`test/migrations-guard.test.ts` 扫描**所有** v1 迁移：引号标识符、表达式索引、括号、空语句、journal / SQL / 快照一致、wrangler 拆分结果与 drizzle 一致、整条迁移链可在空库执行且必需触发器存在。
 - 表达式部分唯一索引（`ifnull(...)` + `WHERE`）与复合外键需在 M2-B 验证 drizzle-kit 的生成结果，必要时手工修改迁移 SQL，并以测试确认索引与约束确实生效。
 - "设为默认"等多行更新使用 `db.batch()` 原子执行（先清除同范围旧默认，再设置新默认）；部分唯一索引作为最后防线。
 - 共享 zod schema、DTO 类型、ISO 国家与币种清单放在新包 `packages/ledger-shared`（`@xui/ledger-shared`），不修改 `@z-ui/shared`。

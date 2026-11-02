@@ -1,6 +1,6 @@
 # X-UI Product v1 — API 规格（API_SPEC）
 
-> 状态：§2 为 M1 已实现接口；**§3 起为 M2 设计（M2-A 修订版），尚未实现**。
+> 状态：§2 为 M1 已实现接口；**§3 起为 M2 设计（M2-A 修订版，含 M2-B1 加固），尚未实现**。
 > 相关文档：[PRODUCT_SPEC.md](PRODUCT_SPEC.md) · [DATA_MODEL.md](DATA_MODEL.md) · [TEST_PLAN.md](TEST_PLAN.md)
 
 ## 1. 通用约定
@@ -59,8 +59,8 @@ M2 没有需要 step-up 的操作（不保存 PAN，没有查看卡号接口）�
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/settings/profile` | → `{ homeRegion: "CN" }`（未设置时返回默认 `CN`） |
-| PATCH | `/settings/profile` | `{ homeRegion }`，ISO alpha-2；只影响之后新建的 M3 流水，不回写历史 |
+| GET | `/settings/profile` | → `{ homeRegion: "CN" }`：当前用户的 `user_preferences`；没有记录时返回默认 `CN` |
+| PATCH | `/settings/profile` | `{ homeRegion }`，ISO alpha-2；写入（不存在则创建）当前用户的 `user_preferences` 行，不影响其他用户；只影响之后新建的 M3 流水，不回写历史 |
 
 ### 3.2 金融机构
 
@@ -84,7 +84,7 @@ M2 没有需要 step-up 的操作（不保存 PAN，没有查看卡号接口）�
 | GET | `/accounts?q=&institutionId=&type=&country=&currency=&status=&cardId=` | 列表；每项含币种、`linkedCardCount` 与前 3 张卡摘要 |
 | POST | `/accounts` | 账户 + 币种在一个 batch 中创建 |
 | GET | `/accounts/:id` | 详情：币种、关联（含已结束，标记 `status`）、作为余额账户或来源的支付渠道 |
-| PATCH | `/accounts/:id` | 部分更新（不含币种）；修改 `accountCountry` 不影响历史流水（M3 快照） |
+| PATCH | `/accounts/:id` | 部分更新（不含币种）；**不接受 `institutionId`**（400 `VALIDATION`，开户法律实体变化时新建账户）；修改 `accountCountry` 不影响历史流水（M3 快照） |
 | PUT | `/accounts/:id/currencies` | 整体替换币种列表；移除被关联引用的币种 → 409 `CURRENCY_IN_USE` |
 | DELETE | `/accounts/:id` | 级联删除其币种、关联、渠道来源；被渠道用作余额账户 → 409 `IN_USE`；M3 起被流水引用 → 409 `IN_USE` |
 
@@ -247,7 +247,9 @@ M3 新建流水时：`exact_currency` 预填资金账户与扣款币种（扣款
 
 ### 3.7 审计
 
-M2 记录以下审计动作（detail 只含 id 与后四位）：`institution.delete`、`account.delete`、`card.create`、`card.delete`、`card_link.create`、`card_link.end`、`card_link.delete`、`channel.delete`、`settings.home_region`。
+M2 记录以下审计动作（detail 只含 id 与后四位）：`institution.delete`、`account.delete`、`card.create`、`card.delete`、`card_link.create`、`card_link.end`、`card_link.delete`、`channel.delete`、`preferences.home_region`。
+
+审计记录的保留与内容限制见 DATA_MODEL §6.1：删除用户不删除其审计记录，记录中不得出现任何凭证。
 
 ## 4. 不在 M2 的接口
 - 查看卡号（`/cards/:id/reveal`）—— 不保存 PAN，因此不存在。

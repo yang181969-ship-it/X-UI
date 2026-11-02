@@ -1,0 +1,13 @@
+{
+  "name": "@xui/ledger-shared",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "X-UI Product v1 shared enums, ISO lists, zod request schemas and DTO types (not used by the legacy app).",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "zod": "^4.6.7"
+  }
+}
