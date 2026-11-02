@@ -30,3 +30,8 @@ apps/web/public/bin/
 # wrangler local state
 .wrangler/
 .dev.vars
+
+# X-UI Product v1 (apps/ledger-*): .env.v1 is covered by .env.* above
+!.env.v1.example
+wrangler.v1.jsonc
+.dev.vars.v1

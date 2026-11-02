@@ -1,0 +1,62 @@
+// X-UI Product v1 on Cloudflare Workers — RESERVED, not used in M1 (no remote D1, no deploy).
+// Separate from the legacy wrangler.jsonc: own Worker name, own D1 database, own migration
+// table, own rate-limit namespace, own XUI_V1_* variables. Copy to wrangler.v1.jsonc (ignored by
+// git) and pass it explicitly: npx wrangler --config wrangler.v1.jsonc …
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "x-ui-v1",
+	"main": "apps/ledger-api/src/worker.ts",
+	"compatibility_date": "2026-10-01",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"assets": {
+		"directory": "./apps/ledger-web/dist",
+		"binding": "ASSETS",
+		"not_found_handling": "single-page-application",
+		"run_worker_first": [
+			"/api/*"
+		]
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			// A NEW database (wrangler d1 create x-ui-v1) — never the legacy "z-ui" one.
+			"database_name": "x-ui-v1",
+			"database_id": "xxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxx",
+			"migrations_dir": "apps/ledger-api/src/db/migrations",
+			"migrations_table": "__xui_v1_migrations"
+		}
+	],
+	"ratelimits": [
+		{
+			"name": "AUTH_LIMITER",
+			"namespace_id": "1101",
+			"simple": {
+				"limit": 20,
+				"period": 60
+			}
+		}
+	],
+	// TODO: a domain of its own. A different hostname also gives v1 its own passkey RP ID and cookies.
+	"routes": [
+		{
+			"pattern": "x-ui.example.com",
+			"custom_domain": true
+		}
+	],
+	"workers_dev": false,
+	"preview_urls": false,
+	"vars": {
+		"XUI_V1_RP_ID": "x-ui.example.com",
+		"XUI_V1_ORIGINS": "https://x-ui.example.com",
+		"XUI_V1_RP_NAME": "X-UI",
+		"XUI_V1_COOKIE_SECURE": "true",
+		"XUI_V1_TRUST_PROXY": "true",
+		"XUI_V1_PASSWORD_ITERATIONS": "50000"
+	},
+	// Secrets (never in this file): npx wrangler --config wrangler.v1.jsonc secret put XUI_V1_APP_ENC_KEY | XUI_V1_SESSION_PEPPER | XUI_V1_SETUP_TOKEN
+	"observability": {
+		"enabled": false
+	}
+}

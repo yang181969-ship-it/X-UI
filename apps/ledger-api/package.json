@@ -1,0 +1,27 @@
+{
+  "name": "@xui/ledger-api",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "X-UI Product v1 API (own database data/x-ui-v1.db, own .env.v1, port 8788).",
+  "scripts": {
+    "dev": "node --watch --watch-preserve-output --import tsx src/node.ts",
+    "start": "tsx src/node.ts --production",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/scripts/migrate.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.5",
+    "@libsql/client": "^0.18.0",
+    "@simplewebauthn/server": "^14.0.3",
+    "@z-ui/shared": "*",
+    "drizzle-orm": "^0.45.4",
+    "hono": "^4.13.13",
+    "otpauth": "^9.5.2",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.31.11",
+    "tsx": "^4.23.15"
+  }
+}
