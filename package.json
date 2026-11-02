@@ -32,7 +32,8 @@
     "db:migrate:v1": "npm run db:migrate -w @xui/ledger-api",
     "typecheck:v1": "tsc -p packages/ledger-shared && tsc -p apps/ledger-api && tsc -p apps/ledger-web",
     "lint:v1": "oxlint packages/ledger-shared apps/ledger-api apps/ledger-web",
-    "test:v1": "vitest run --config apps/ledger-api/vitest.config.ts"
+    "test:v1": "vitest run --config apps/ledger-api/vitest.config.ts",
+    "test:e2e:v1": "playwright test -c playwright.v1.config.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1",

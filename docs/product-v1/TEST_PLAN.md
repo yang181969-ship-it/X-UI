@@ -1,6 +1,6 @@
 # X-UI Product v1 — 测试计划（TEST_PLAN）
 
-> 状态：§1 为 M1 已有测试；**§2 起为 M2 测试设计（M2-A 修订版）；§3.12 的数据库用例、R-2、R-3、R-5、A-12（schema 与服务层）、H-3（数据库层）、D-3 已在 M2-B1 实现**，API 用例尚未实现。
+> 状态：§1 为 M1 已有测试；**§2 起为 M2 测试设计（M2-A 修订版）；§3.12 的数据库用例、R-2、R-3、R-5、A-12（schema 与服务层）、H-3（数据库层）、D-3 已在 M2-B1 实现**，API 用例尚未实现；**M2-B2.1 已实现机构 API 用例（`institutions.test.ts`：I-1 – I-5、X-1 – X-4、U-1 – U-3 中与机构相关部分、R-1）、敏感扫描单元测试（`sensitive.test.ts`）与机构浏览器测试（`e2e-v1/institutions.spec.ts`）**。
 > 相关文档：[PRODUCT_SPEC.md](PRODUCT_SPEC.md) · [DATA_MODEL.md](DATA_MODEL.md) · [API_SPEC.md](API_SPEC.md)
 
 ## 0. 运行方式与准入标准
@@ -10,6 +10,7 @@
 | `npm run test:v1` | v1 测试（`apps/ledger-api/test/**`） |
 | `npm test` | 旧版测试（必须保持全部通过） |
 | `npm run typecheck:v1` / `lint:v1` / `build:v1` | v1 类型检查、lint、构建 |
+| `npm run test:e2e:v1` | v1 浏览器测试（`e2e-v1/`，生产构建 + `data/e2e-v1/` 临时数据库，端口 8798，与旧版 e2e 互不影响） |
 
 M2-B 完成标准：
 - v1 测试、旧版测试、旧版与 v1 的 typecheck/lint/build 全部通过；

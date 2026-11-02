@@ -16,7 +16,9 @@ export type AuditAction =
   | 'recovery.regenerate'
   | 'recovery.used'
   | 'session.revoke'
-  | 'invite.accept';
+  | 'invite.accept'
+  // M2 (API_SPEC §3.7): detail holds ids (and card last4) only.
+  | 'institution.delete';
 
 export async function audit(
   c: Context<AppBindings>,

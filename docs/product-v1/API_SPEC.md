@@ -1,6 +1,6 @@
 # X-UI Product v1 — API 规格（API_SPEC）
 
-> 状态：§2 为 M1 已实现接口；**§3 起为 M2 设计（M2-A 修订版，含 M2-B1 加固），尚未实现**。
+> 状态：§2 为 M1 已实现接口；§3 起为 M2 设计（M2-A 修订版，含 M2-B1 加固）。**§3.2 金融机构已在 M2-B2.1 实现**，其余 M2 接口尚未实现。
 > 相关文档：[PRODUCT_SPEC.md](PRODUCT_SPEC.md) · [DATA_MODEL.md](DATA_MODEL.md) · [TEST_PLAN.md](TEST_PLAN.md)
 
 ## 1. 通用约定
@@ -76,6 +76,12 @@ M2 没有需要 step-up 的操作（不保存 PAN，没有查看卡号接口）�
 ```json
 { "name": "Wise", "country": "GB", "institutionType": "emi", "website": "https://wise.com", "color": "#9fe870", "notes": null }
 ```
+实现说明（M2-B2.1）：
+- 列表直接返回数组，按 `sort`、`name_key` 排序；`q` 按名称规范化值做子串匹配（`%`、`_` 按字面）；查询参数同样严格校验（未知参数 → 400）。引用计数包含所有状态（已关闭账户仍算引用）。
+- `POST` → 201 + 机构 DTO；`PATCH` 空请求体 → 400；`DELETE` → 200 `{ ok: true }`，审计 `institution.delete` 只记 `{ id }`。
+- 重名：同一用户下 `name_key` + 国家（空国家视为同一值）相同 → 409 `DUPLICATE` `{ existingId }`，已归档的机构同样参与判断；`PATCH` 改名或改国家同样检查。唯一索引是最后防线：并发冲突同样返回 409。
+- `IN_USE`：`details.references = { accounts, cards, channels }`；检查与删除之间新增的引用由 NO ACTION 外键拒绝，同样返回 409。
+- 敏感扫描字段：`name`、`notes`、`website`；`details.fields = [{ field, kind }]`，不回显命中的文本。
 
 ### 3.3 账户
 

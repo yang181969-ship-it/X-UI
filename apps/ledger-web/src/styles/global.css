@@ -1278,3 +1278,72 @@ html[data-theme='light'] .login-blob {
 .tx-not-counted {
   opacity: 0.5;
 }
+
+/* ---------------------------------------------------------------- institutions (M2-B2.1) */
+
+.institution-avatar {
+  letter-spacing: 0.02em;
+  user-select: none;
+}
+.institution-cell {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.institution-table .clickable-row {
+  cursor: pointer;
+}
+.institution-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+.institution-detail .ref-section {
+  margin-top: 20px;
+}
+.pre-wrap {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.form-alert {
+  margin-bottom: 16px;
+}
+.color-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.color-swatch {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  cursor: pointer;
+  outline-offset: 2px;
+  transition:
+    transform 0.15s var(--ease-out),
+    border-color 0.15s;
+}
+.color-swatch.is-auto {
+  background: transparent;
+  overflow: hidden;
+}
+.color-swatch.is-auto .institution-avatar {
+  border-radius: 6px;
+}
+.color-swatch:hover {
+  transform: translateY(-1px);
+}
+.color-swatch.is-selected {
+  border-color: var(--ant-color-text);
+}
+.color-swatch:focus-visible {
+  outline: 2px solid var(--ant-color-primary);
+}

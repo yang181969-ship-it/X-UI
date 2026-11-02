@@ -300,6 +300,7 @@ rank := is_default DESC,
    - 13–19 位数字（允许其间有空格或 `-`）且通过 Luhn 校验 → `400 SENSITIVE_DATA`；
    - `cvv|cvc|cvv2|pin|安全码|密码` 后接 3–6 位数字 → `400 SENSITIVE_DATA`。
    - **无绕过参数或确认选项。**
+   - 实现（`@xui/ledger-shared` 的 `scanSensitive`，API 与前端共用）：先做 NFKC（全角数字同样命中）；数字组之间允许 1–2 个空格或 `-`，对连续若干组合计 13–19 位的每个组合做 Luhn 检查（"ref 12 4111 1111 1111 1111" 同样命中）；`cvv`/`cvc`/`cvv2`/`pin` 需为独立单词（"spin 1234" 不命中）。机构的 `website` 也做扫描。
 3. 表结构中不存在 PAN、BIN、CVV、PIN、持卡人姓名、完整账号、余额相关列（由测试扫描 schema 保证）。
 4. 不记录请求体日志；审计日志 detail 只含 id 与后四位。
 

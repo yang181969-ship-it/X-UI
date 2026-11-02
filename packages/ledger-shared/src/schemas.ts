@@ -267,6 +267,18 @@ export const channelSourceUpdateSchema = z.strictObject({
 
 // ------------------------------------------------------------------ queries
 
+/** status filter of the list endpoints: omitted = not archived, 'all' = everything (API_SPEC §1). */
+export const INSTITUTION_STATUS_FILTERS = [...INSTITUTION_STATUSES, 'all'] as const;
+
+/** GET /institutions?q=&type=&country=&status= */
+export const institutionListQuerySchema = z.strictObject({
+  /** Matched against the normalized name (same rules as name_key). */
+  q: z.string().max(NAME_MAX).optional(),
+  type: z.enum(INSTITUTION_TYPES).optional(),
+  country: countrySchema.optional(),
+  status: z.enum(INSTITUTION_STATUS_FILTERS).optional(),
+});
+
 /** GET /cards/:id/spending-source?currency= — the Event (purchase) currency, upper-case ISO 4217. */
 export const spendingSourceQuerySchema = z.strictObject({ currency: currencySchema });
 
@@ -280,6 +292,7 @@ export function ledgerErrorCode(error: z.ZodError): Extract<LedgerErrorCode, 'VA
 export type ProfileSettingsUpdate = z.infer<typeof profileSettingsUpdateSchema>;
 export type InstitutionCreate = z.infer<typeof institutionCreateSchema>;
 export type InstitutionUpdate = z.infer<typeof institutionUpdateSchema>;
+export type InstitutionListQuery = z.infer<typeof institutionListQuerySchema>;
 export type AccountCreate = z.infer<typeof accountCreateSchema>;
 export type AccountUpdate = z.infer<typeof accountUpdateSchema>;
 export type AccountCurrenciesReplace = z.infer<typeof accountCurrenciesReplaceSchema>;
