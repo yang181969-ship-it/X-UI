@@ -4,6 +4,7 @@ import { HTTPException } from 'hono/http-exception';
 import { secureHeaders } from 'hono/secure-headers';
 import { csrfGuard, requireAuth } from './auth/middleware.ts';
 import type { AppBindings, Deps } from './env.ts';
+import { accountRoutes } from './routes/accounts.ts';
 import { authRoutes } from './routes/auth.ts';
 import { institutionRoutes } from './routes/institutions.ts';
 import { setupRoutes } from './routes/setup.ts';
@@ -20,6 +21,7 @@ export interface AppOptions {
 export const PROTECTED_MOUNTS = {
   '/system': systemRoutes,
   '/institutions': institutionRoutes,
+  '/accounts': accountRoutes,
 } as const;
 
 export function createApp(deps: Deps, opts: AppOptions) {

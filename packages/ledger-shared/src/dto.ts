@@ -138,6 +138,17 @@ export interface AccountDetail extends AccountDto {
   sourceOfChannels: ChannelSummary[];
 }
 
+/** details of DELETE /accounts/:id → 409 IN_USE: the channels using the account as their balance account. */
+export interface AccountInUseDetails {
+  references: { balanceOfChannels: number };
+  channels: ChannelSummary[];
+}
+
+/** details of PUT /accounts/:id/currencies → 409 CURRENCY_IN_USE: removed currencies that are still referenced. */
+export interface CurrencyInUseDetails {
+  currencies: string[];
+}
+
 // ------------------------------------------------------------------ cards
 
 export interface CardDto {

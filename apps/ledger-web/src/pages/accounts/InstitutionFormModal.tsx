@@ -1,12 +1,12 @@
 import { CheckOutlined } from '@ant-design/icons';
-import { useQueryClient } from '@tanstack/react-query';
 import { Alert, App, Button, Form, Input, InputNumber, Modal, Select } from 'antd';
 import { detectSensitive, INSTITUTION_TYPES, NAME_MAX, NOTES_MAX, websiteSchema, WEBSITE_MAX, type CountryCode, type InstitutionDto, type InstitutionType } from '@xui/ledger-shared';
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ApiError } from '../../api/client.ts';
 import { errorText } from '../../api/hooks.ts';
-import { createInstitution, INSTITUTIONS, updateInstitution } from '../../api/institutions.ts';
+import { useRefreshAccounts } from '../../api/accounts.ts';
+import { createInstitution, updateInstitution } from '../../api/institutions.ts';
 import { InstitutionAvatar } from '../../components/InstitutionAvatar.tsx';
 import { regionOptions } from '../../lib/regions.ts';
 
@@ -58,6 +58,7 @@ export function InstitutionFormModal({
   onClose,
   onSaved,
   onViewExisting,
+  existingLabel,
 }: {
   open: boolean;
   /** null = create. */
@@ -65,10 +66,13 @@ export function InstitutionFormModal({
   onClose: () => void;
   onSaved?: (inst: InstitutionDto) => void;
   onViewExisting: (id: string) => void;
+  /** Label of the duplicate warning's button (default: view the existing institution). */
+  existingLabel?: string;
 }) {
   const { t, i18n } = useTranslation();
   const { message } = App.useApp();
-  const qc = useQueryClient();
+  // Accounts embed their institution's name, colour and status: refresh them too.
+  const refresh = useRefreshAccounts();
   const [form] = Form.useForm<FormValues>();
   const [busy, setBusy] = useState(false);
   const [duplicateId, setDuplicateId] = useState<string | null>(null);
@@ -116,7 +120,7 @@ export function InstitutionFormModal({
     setDuplicateId(null);
     try {
       const saved = editing ? await updateInstitution(editing.id, body) : await createInstitution(body);
-      await qc.invalidateQueries({ queryKey: [INSTITUTIONS] });
+      await refresh();
       void message.success(editing ? t('common.saved') : t('institutions.created'));
       onSaved?.(saved);
       onClose();
@@ -158,7 +162,7 @@ export function InstitutionFormModal({
           action={
             duplicateId && (
               <Button size="small" onClick={() => onViewExisting(duplicateId)}>
-                {t('institutions.viewExisting')}
+                {existingLabel ?? t('institutions.viewExisting')}
               </Button>
             )
           }

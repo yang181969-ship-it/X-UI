@@ -1,6 +1,6 @@
 # X-UI Product v1 — 测试计划（TEST_PLAN）
 
-> 状态：§1 为 M1 已有测试；**§2 起为 M2 测试设计（M2-A 修订版）；§3.12 的数据库用例、R-2、R-3、R-5、A-12（schema 与服务层）、H-3（数据库层）、D-3 已在 M2-B1 实现**，API 用例尚未实现；**M2-B2.1 已实现机构 API 用例（`institutions.test.ts`：I-1 – I-5、X-1 – X-4、U-1 – U-3 中与机构相关部分、R-1）、敏感扫描单元测试（`sensitive.test.ts`）与机构浏览器测试（`e2e-v1/institutions.spec.ts`）**。
+> 状态：§1 为 M1 已有测试；**§2 起为 M2 测试设计（M2-A 修订版）；§3.12 的数据库用例、R-2、R-3、R-5、A-12（schema 与服务层）、H-3（数据库层）、D-3 已在 M2-B1 实现**，API 用例尚未实现；**M2-B2.1 已实现机构 API 用例（`institutions.test.ts`：I-1 – I-5、X-1 – X-4、U-1 – U-3 中与机构相关部分、R-1）、敏感扫描单元测试（`sensitive.test.ts`）与机构浏览器测试（`e2e-v1/institutions.spec.ts`）；M2-B2.2 已实现账户 API 用例（`accounts.test.ts`：A-1 – A-12、D-1、D-2（账户币种部分）、D-4、D-7 以及 X-1 – X-4、U-1 – U-3、R-1 中与账户相关部分）、新建账户须为有效机构（已归档 → 409、恢复后成功、他人机构恒为 404、归档与创建竞争）、替换币种在中间步骤失败时完整回滚（币种集合、默认 USD、`updated_at`、关联均不变），后两类在 libSQL 与本地 D1（`accounts-d1.test.ts`）均验证与账户浏览器测试（`e2e-v1/accounts.spec.ts`，独立测试用户）**。
 > 相关文档：[PRODUCT_SPEC.md](PRODUCT_SPEC.md) · [DATA_MODEL.md](DATA_MODEL.md) · [API_SPEC.md](API_SPEC.md)
 
 ## 0. 运行方式与准入标准

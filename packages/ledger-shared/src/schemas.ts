@@ -279,6 +279,24 @@ export const institutionListQuerySchema = z.strictObject({
   status: z.enum(INSTITUTION_STATUS_FILTERS).optional(),
 });
 
+/** status filter of GET /accounts: omitted = not closed (active and frozen), 'all' = everything. */
+export const ACCOUNT_STATUS_FILTERS = [...ACCOUNT_STATUSES, 'all'] as const;
+
+/** GET /accounts?q=&institutionId=&type=&country=&currency=&status=&cardId= */
+export const accountListQuerySchema = z.strictObject({
+  /** Matched against the normalized account name, the institution name and the number hint. */
+  q: z.string().max(NAME_MAX).optional(),
+  institutionId: idSchema.optional(),
+  type: z.enum(ACCOUNT_TYPES).optional(),
+  /** account_country (the contracting entity's jurisdiction), not the institution's country. */
+  country: countrySchema.optional(),
+  /** Accounts holding this currency (active or closed). */
+  currency: currencySchema.optional(),
+  status: z.enum(ACCOUNT_STATUS_FILTERS).optional(),
+  /** Accounts with an unfinished link to this card. */
+  cardId: idSchema.optional(),
+});
+
 /** GET /cards/:id/spending-source?currency= — the Event (purchase) currency, upper-case ISO 4217. */
 export const spendingSourceQuerySchema = z.strictObject({ currency: currencySchema });
 
@@ -296,6 +314,7 @@ export type InstitutionListQuery = z.infer<typeof institutionListQuerySchema>;
 export type AccountCreate = z.infer<typeof accountCreateSchema>;
 export type AccountUpdate = z.infer<typeof accountUpdateSchema>;
 export type AccountCurrenciesReplace = z.infer<typeof accountCurrenciesReplaceSchema>;
+export type AccountListQuery = z.infer<typeof accountListQuerySchema>;
 export type CardCreate = z.infer<typeof cardCreateSchema>;
 export type CardUpdate = z.infer<typeof cardUpdateSchema>;
 export type CardLinkCreate = z.infer<typeof cardLinkCreateSchema>;

@@ -1347,3 +1347,136 @@ html[data-theme='light'] .login-blob {
 .color-swatch:focus-visible {
   outline: 2px solid var(--ant-color-primary);
 }
+
+/* ---------------------------------------------------------------- accounts (M2-B2.2) */
+
+.account-table .clickable-row {
+  cursor: pointer;
+}
+.institution-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.currency-tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.currency-tags .ant-tag {
+  margin-inline-end: 0;
+  font-family: var(--ant-font-family-code, ui-monospace, monospace);
+}
+.currency-tag.is-closed {
+  opacity: 0.55;
+  text-decoration: line-through;
+}
+.account-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.account-group-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.account-group-name {
+  font-weight: 600;
+}
+.account-group-add {
+  margin-left: auto;
+}
+.currency-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.currency-row-edit {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 10px;
+  border: 1px solid var(--ant-color-border-secondary);
+  border-radius: 8px;
+}
+.currency-row-edit.is-closed .currency-code {
+  opacity: 0.55;
+}
+.currency-code {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.currency-default-label {
+  font-size: 12px;
+  color: var(--ant-color-primary);
+}
+.currency-row-actions {
+  display: inline-flex;
+}
+.currency-add {
+  align-self: flex-start;
+  margin-top: 4px;
+}
+.form-pair > .ant-space-item {
+  min-width: 0;
+}
+.warning-text {
+  color: var(--ant-color-warning);
+}
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.account-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.account-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+.account-head-actions {
+  margin-left: auto;
+}
+.row-item.is-closed .row-title {
+  opacity: 0.55;
+}
+.field-note {
+  margin: 12px 0 0;
+  font-size: 12px;
+}
+.account-detail .ref-section + .ref-section {
+  margin-top: 16px;
+}
+.currency-closed-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding-left: 6px;
+  border-left: 1px solid var(--ant-color-border-secondary);
+}
+.currency-closed-label {
+  font-size: 12px;
+  color: var(--ant-color-text-tertiary);
+}
+.currency-section {
+  margin-top: 12px;
+}
+.currency-section .field-note {
+  display: block;
+  margin: 0 0 4px;
+}

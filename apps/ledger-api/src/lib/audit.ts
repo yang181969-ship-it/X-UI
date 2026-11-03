@@ -18,7 +18,8 @@ export type AuditAction =
   | 'session.revoke'
   | 'invite.accept'
   // M2 (API_SPEC §3.7): detail holds ids (and card last4) only.
-  | 'institution.delete';
+  | 'institution.delete'
+  | 'account.delete';
 
 export async function audit(
   c: Context<AppBindings>,

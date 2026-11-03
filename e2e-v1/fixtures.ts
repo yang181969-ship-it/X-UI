@@ -11,11 +11,28 @@ export const OWNER = { username: 'owner', password: 'e2e v1 owner password', dis
 export const OWNER_TOTP_SECRET = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
 export const OTHER = { username: 'other', password: 'e2e v1 other password', displayName: '另一位用户' };
 
-/** Seeded with raw rows: the account API arrives in a later step. */
+/** Seeded with raw rows for OWNER (institutions journey). */
 export const SEED = {
   referencedInstitution: '示例参考银行',
   referencingAccount: '示例储蓄账户',
   otherUsersInstitution: 'Other User Test Bank',
+};
+
+/**
+ * The accounts journey signs in as its own user, so its data never changes what the institutions
+ * journey counts. Cards, card links and payment channels have no API or UI yet: seeded as rows.
+ */
+export const ACCOUNTS_USER = { username: 'accounts', password: 'e2e v1 accounts password', displayName: '账户测试用户' };
+export const ACCOUNTS_TOTP_SECRET = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
+export const ACCOUNTS_SEED = {
+  bank: '示例环球银行',
+  /** bank account, SG, SGD (default) / USD / EUR; EUR is the scope of a card link. */
+  linkedAccount: '示例环球储蓄',
+  card: '示例借记卡',
+  emi: '示例支付服务',
+  /** e-money account used as the balance account of a payment channel. */
+  balanceAccount: '示例钱包账户',
+  channel: '示例支付渠道',
 };
 
 export function totp(secret: string, at = Date.now()): string {

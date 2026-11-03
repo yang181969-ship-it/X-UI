@@ -1,17 +1,17 @@
-import { useQueryClient } from '@tanstack/react-query';
 import { App } from 'antd';
 import type { InstitutionDto, InstitutionStatus } from '@xui/ledger-shared';
 import { useTranslation } from 'react-i18next';
 import { ApiError } from '../../api/client.ts';
 import { errorText } from '../../api/hooks.ts';
-import { deleteInstitution, INSTITUTIONS, updateInstitution, type InUseDetails } from '../../api/institutions.ts';
+import { useRefreshAccounts } from '../../api/accounts.ts';
+import { deleteInstitution, updateInstitution, type InUseDetails } from '../../api/institutions.ts';
 
 /** Archive / restore / delete, shared by the list and the detail drawer. */
 export function useInstitutionActions() {
   const { t } = useTranslation();
   const { message, modal } = App.useApp();
-  const qc = useQueryClient();
-  const refresh = () => qc.invalidateQueries({ queryKey: [INSTITUTIONS] });
+  // Accounts embed their institution's name, colour and status: refresh them too.
+  const refresh = useRefreshAccounts();
 
   const setStatus = async (inst: Pick<InstitutionDto, 'id'>, status: InstitutionStatus) => {
     try {

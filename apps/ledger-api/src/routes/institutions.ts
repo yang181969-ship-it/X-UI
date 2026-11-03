@@ -3,7 +3,6 @@ import {
   institutionListQuerySchema,
   institutionUpdateSchema,
   normalizeNameKey,
-  scanSensitive,
   type AccountSummary,
   type CardSummary,
   type ChannelSummary,
@@ -16,7 +15,8 @@ import { Hono, type Context } from 'hono';
 import { accounts, cards, institutions, paymentChannels } from '../db/schema.ts';
 import type { AppBindings } from '../env.ts';
 import { audit } from '../lib/audit.ts';
-import { body, errorChain, fail, notFound, query } from '../lib/http.ts';
+import { isForeignKeyViolation, isUniqueViolation, likeContains, nothingToUpdate, rejectSensitive } from '../lib/guards.ts';
+import { body, fail, notFound, query } from '../lib/http.ts';
 import { newId } from '../lib/id.ts';
 
 /**
@@ -70,15 +70,6 @@ async function loadCounted(c: C, id: string): Promise<CountedRow> {
   return r;
 }
 
-/** LIKE pattern for a literal substring (escape with '\'). */
-const likeContains = (s: string) => `%${s.replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
-
-/** 400 SENSITIVE_DATA naming the fields (never the matched text). No bypass exists. */
-function rejectSensitive(fields: Record<string, string | null | undefined>) {
-  const hits = scanSensitive(fields);
-  if (hits.length) fail(400, 'free text looks like a card number or a security code', 'SENSITIVE_DATA', { fields: hits });
-}
-
 /** Id of the caller's institution with this name key and country (null = no country), other than `exceptId`. */
 async function findDuplicate(c: C, nameKey: string, country: string | null, exceptId?: string): Promise<string | null> {
   const conds: SQL[] = [
@@ -93,9 +84,6 @@ async function findDuplicate(c: C, nameKey: string, country: string | null, exce
 
 const duplicate = (existingId: string): never =>
   fail(409, 'an institution with this name already exists in this country', 'DUPLICATE', { existingId });
-
-const isUniqueViolation = (err: unknown) => /UNIQUE constraint failed/i.test(errorChain(err));
-const isForeignKeyViolation = (err: unknown) => /FOREIGN KEY constraint failed/i.test(errorChain(err));
 
 export const institutionRoutes = new Hono<AppBindings>()
   .get('/', async (c) => {
@@ -185,7 +173,7 @@ export const institutionRoutes = new Hono<AppBindings>()
 
   .patch('/:id', async (c) => {
     const input = await body(c, institutionUpdateSchema);
-    if (Object.keys(input).length === 0) fail(400, 'nothing to update', 'VALIDATION', [{ code: 'custom', path: [], message: 'nothing to update' }]);
+    if (Object.keys(input).length === 0) nothingToUpdate();
     const id = c.req.param('id');
     const [current] = await c.var.deps.db.select().from(institutions).where(ownRow(c, id));
     if (!current) notFound('institution');

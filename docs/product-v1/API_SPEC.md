@@ -1,6 +1,6 @@
 # X-UI Product v1 — API 规格（API_SPEC）
 
-> 状态：§2 为 M1 已实现接口；§3 起为 M2 设计（M2-A 修订版，含 M2-B1 加固）。**§3.2 金融机构已在 M2-B2.1 实现**，其余 M2 接口尚未实现。
+> 状态：§2 为 M1 已实现接口；§3 起为 M2 设计（M2-A 修订版，含 M2-B1 加固）。**§3.2 金融机构已在 M2-B2.1 实现，§3.3 账户已在 M2-B2.2 实现**，其余 M2 接口尚未实现。
 > 相关文档：[PRODUCT_SPEC.md](PRODUCT_SPEC.md) · [DATA_MODEL.md](DATA_MODEL.md) · [TEST_PLAN.md](TEST_PLAN.md)
 
 ## 1. 通用约定
@@ -30,6 +30,7 @@
 | `DUPLICATE` | 409 | 重名机构 / 重复的有效关联 / 重名渠道 / 账户已是其他渠道的余额账户；`details.existingId` |
 | `IN_USE` | 409 | 被引用，不能删除；`details.references` 给出引用计数 |
 | `CURRENCY_IN_USE` | 409 | 币种被关联引用，不能移除（应改为关闭） |
+| `INSTITUTION_ARCHIVED` | 409 | 机构已归档，不能新建账户（先恢复机构）；`details.institutionId`（M2-B2.2 复审新增） |
 
 ## 2. M1 已实现接口（不变）
 
@@ -116,6 +117,18 @@ M2 没有需要 step-up 的操作（不保存 PAN，没有查看卡号接口）�
 校验：`accountCountry` 必填（无服务端推断）；币种 1–30 个、不重复、恰好一个默认；`depositKind` 仅 `accountType = bank` 时允许。
 
 `PUT /accounts/:id/currencies` 请求体：`{ "currencies": [{ "code": "USD", "isDefault": true, "status": "active" }, { "code": "JPY", "status": "closed" }] }`。
+
+实现说明（M2-B2.2）：
+- `institutionId` 必须是当前用户的机构，否则 404 `NOT_FOUND`（他人的或不存在的机构同样处理，无论其状态，不泄露存在性；复合外键是最后防线）。
+- 新建账户只能使用 `active` 机构：已归档 → 409 `INSTITUTION_ARCHIVED`（`details.institutionId`），需先恢复机构。已归档机构的现有账户照常可查看、修改、管理币种。竞争保护：账户行以 `INSERT … SELECT … FROM institutions WHERE id、user_id 匹配且 status = 'active'` 写入，与币种在同一 batch 中；若机构在检查之后被归档或删除，该语句写入 0 行，随后的币种 INSERT 因 `(account_id, user_id)` 外键失败而整体回滚，API 重新读取机构状态后返回 409 或 404。不需要修改数据库结构（0001 不变）。
+- `POST` → 201 + 账户 DTO（含 `institution` 摘要与 `currencies`）；账户与每个币种各一条 INSERT，放在同一个 `db.batch()` 中（D1 单条语句最多 100 个绑定参数，30 个币种合并为一条会超限），任一失败整体回滚。币种 `sort` = 列表中的位置。
+- 列表直接返回数组，按 `sort`、`name_key` 排序；`status` 缺省返回未关闭的账户（正常与冻结），`all` 返回全部；`q` 按规范化值匹配账户名称、机构名称或账号尾号（`%`、`_` 按字面）；`currency` 匹配持有该币种的账户（含已关闭的币种）；`cardId` 只匹配未结束的关联；`linkedCardCount` 为未结束关联的不同银行卡数，`linkedCards` 为按卡片排序的前 3 张。查询参数严格校验。
+- 币种 DTO 带 `status`；前端在列表中先显示有效币种，再以「已关闭」标签分隔显示已关闭币种，详情页分「有效币种」「已关闭币种」两节。
+- `GET /accounts/:id` 的 `links` 含全部状态（含 `ended`）；`balanceOfChannels` 为以其为余额账户的渠道；`sourceOfChannels` 为以其为有效（`active`）来源的渠道。
+- `PATCH` 经服务层 `accountPatchValues`：空请求体、`institutionId` 等未知字段 → 400 `VALIDATION`；与已存值合并后再检查 `depositKind` 仅限 `bank`、`closedOn ≥ openedOn`（400 `VALIDATION`）；被渠道用作余额账户时改为 `bank` / `other` → 400 `BALANCE_ACCOUNT_KIND`（`details.channels`，触发器为最后防线）。状态在 `active`、`frozen`、`closed` 之间任意切换，不修改币种与关联。
+- `PUT /currencies`：与已存币种比对，batch 顺序为"清除旧默认 → 删除移除的币种 → 逐个更新或插入（新的默认、状态、`sort`）→ 更新 `updated_at`"，任何时刻不会出现两个默认；保留的币种保留 `created_at`。被关联（任何状态，包括 `ended`）引用的币种不能移除 → 409 `CURRENCY_IN_USE`，`details.currencies` 列出这些币种；检查与 batch 之间新增的引用由 NO ACTION 外键拒绝，同样返回 409 且不做任何修改。改为 `closed` 不受影响，关联保留。
+- `DELETE` → 200 `{ ok: true }`，审计 `account.delete` 只记 `{ id }`；被渠道用作余额账户 → 409 `IN_USE`，`details = { references: { balanceOfChannels }, channels: [渠道摘要] }`。
+- 敏感扫描字段：`name`、`notes`、`numberHint`。
 
 ### 3.4 银行卡
 

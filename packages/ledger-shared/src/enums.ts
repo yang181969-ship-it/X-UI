@@ -98,6 +98,7 @@ export const LEDGER_ERROR_CODES = [
   'DUPLICATE',
   'IN_USE',
   'CURRENCY_IN_USE',
+  'INSTITUTION_ARCHIVED',
 ] as const;
 export type LedgerErrorCode = (typeof LEDGER_ERROR_CODES)[number];
 

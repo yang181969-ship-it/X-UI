@@ -17,6 +17,7 @@ const SetupPage = lazy(() => import('./pages/SetupPage.tsx').then((m) => ({ defa
 const OverviewPage = lazy(() => import('./pages/OverviewPage.tsx').then((m) => ({ default: m.OverviewPage })));
 const TransactionsPage = lazy(() => import('./pages/TransactionsPage.tsx').then((m) => ({ default: m.TransactionsPage })));
 const AccountsPage = lazy(() => import('./pages/AccountsPage.tsx').then((m) => ({ default: m.AccountsPage })));
+const AccountDetailPage = lazy(() => import('./pages/AccountDetailPage.tsx').then((m) => ({ default: m.AccountDetailPage })));
 const CardsPage = lazy(() => import('./pages/CardsPage.tsx').then((m) => ({ default: m.CardsPage })));
 const SettingsPage = lazy(() => import('./pages/SettingsPage.tsx').then((m) => ({ default: m.SettingsPage })));
 
@@ -41,6 +42,7 @@ const router = createBrowserRouter([
       { index: true, element: <OverviewPage /> },
       { path: 'transactions', element: <TransactionsPage /> },
       { path: 'accounts', element: <AccountsPage /> },
+      { path: 'accounts/:id', element: <AccountDetailPage /> },
       { path: 'cards', element: <CardsPage /> },
       { path: 'settings', element: <SettingsPage /> },
       { path: '*', element: <Navigate to="/" replace /> },

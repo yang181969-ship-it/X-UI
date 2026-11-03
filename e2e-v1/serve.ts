@@ -1,18 +1,18 @@
 /**
  * Starts the X-UI v1 production build (apps/ledger-web/dist served by apps/ledger-api) against a
  * throwaway database in data/e2e-v1/, so browser runs never touch data/x-ui-v1.db or the legacy
- * app. Seeds two users and a few fictional rows.
+ * app. Seeds three users and a few fictional rows (the accounts journey has its own user).
  */
 import { mkdirSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { createUser } from '../apps/ledger-api/src/auth/users.ts';
 import { openV1Db } from '../apps/ledger-api/src/db/client.ts';
-import { accountCurrencies, accounts, institutions, users } from '../apps/ledger-api/src/db/schema.ts';
+import { accountCardLinks, accountCurrencies, accounts, cards, institutions, paymentChannels, users } from '../apps/ledger-api/src/db/schema.ts';
 import { readEnv } from '../apps/ledger-api/src/env.ts';
 import { newId } from '../apps/ledger-api/src/lib/id.ts';
 import { legacyDbPaths, main, REPO_ROOT } from '../apps/ledger-api/src/node.ts';
-import { BASE_URL, E2E_V1_PORT, OTHER, OWNER, OWNER_TOTP_SECRET, SEED } from './fixtures.ts';
+import { ACCOUNTS_SEED, ACCOUNTS_TOTP_SECRET, ACCOUNTS_USER, BASE_URL, E2E_V1_PORT, OTHER, OWNER, OWNER_TOTP_SECRET, SEED } from './fixtures.ts';
 
 const dir = resolve(REPO_ROOT, 'data/e2e-v1');
 rmSync(dir, { recursive: true, force: true });
@@ -60,6 +60,27 @@ await db.insert(accounts).values({
   updatedAt: now,
 });
 await db.insert(accountCurrencies).values({ accountId: account, userId: owner.id, currency: 'SGD', isDefault: true, createdAt: now });
+
+// The accounts journey's own user and rows (fictional).
+const acc = await activate(ACCOUNTS_USER, ACCOUNTS_TOTP_SECRET);
+const [bank, emi, linked, wallet, card] = [newId(now), newId(now), newId(now), newId(now), newId(now)];
+await db.insert(institutions).values([
+  { id: bank, userId: acc.id, name: ACCOUNTS_SEED.bank, nameKey: ACCOUNTS_SEED.bank, country: 'SG', institutionType: 'bank', createdAt: now, updatedAt: now },
+  { id: emi, userId: acc.id, name: ACCOUNTS_SEED.emi, nameKey: ACCOUNTS_SEED.emi, country: 'LU', institutionType: 'emi', createdAt: now, updatedAt: now },
+]);
+await db.insert(accounts).values([
+  { id: linked, userId: acc.id, institutionId: bank, name: ACCOUNTS_SEED.linkedAccount, nameKey: ACCOUNTS_SEED.linkedAccount, accountType: 'bank', depositKind: 'savings', accountCountry: 'SG', numberHint: '0042', createdAt: now, updatedAt: now },
+  { id: wallet, userId: acc.id, institutionId: emi, name: ACCOUNTS_SEED.balanceAccount, nameKey: ACCOUNTS_SEED.balanceAccount, accountType: 'e_money', accountCountry: 'LU', createdAt: now, updatedAt: now },
+]);
+await db.insert(accountCurrencies).values([
+  { accountId: linked, userId: acc.id, currency: 'SGD', isDefault: true, sort: 0, createdAt: now },
+  { accountId: linked, userId: acc.id, currency: 'USD', sort: 1, createdAt: now },
+  { accountId: linked, userId: acc.id, currency: 'EUR', sort: 2, createdAt: now },
+  { accountId: wallet, userId: acc.id, currency: 'EUR', isDefault: true, createdAt: now },
+]);
+await db.insert(cards).values({ id: card, userId: acc.id, issuerInstitutionId: bank, name: ACCOUNTS_SEED.card, network: 'visa', cardType: 'debit', last4: '4242', issuingCountry: 'SG', createdAt: now, updatedAt: now });
+await db.insert(accountCardLinks).values({ id: newId(now), userId: acc.id, cardId: card, accountId: linked, currency: 'EUR', role: 'spending_source', isDefault: true, createdAt: now, updatedAt: now });
+await db.insert(paymentChannels).values({ id: newId(now), userId: acc.id, name: ACCOUNTS_SEED.channel, nameKey: ACCOUNTS_SEED.channel, channelType: 'payment_service', balanceAccountId: wallet, createdAt: now, updatedAt: now });
 client.close();
 
 await main();
