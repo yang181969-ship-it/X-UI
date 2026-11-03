@@ -1243,6 +1243,22 @@ html[data-theme='light'] .login-blob {
   min-width: 0;
 }
 
+/* Settings → General: home region */
+.home-region-card .row-sub {
+  white-space: normal;
+}
+.home-region-current {
+  flex: 0 0 auto;
+  font-weight: 500;
+  color: var(--ant-color-primary);
+}
+.home-region-edit {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: 520px;
+}
+
 .bin-editor {
   margin: -6px 0 14px;
   padding: 10px;

@@ -10,6 +10,7 @@ export const BASE_URL = `http://localhost:${E2E_V1_PORT}`;
 export const OWNER = { username: 'owner', password: 'e2e v1 owner password', displayName: '测试用户' };
 export const OWNER_TOTP_SECRET = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
 export const OTHER = { username: 'other', password: 'e2e v1 other password', displayName: '另一位用户' };
+export const OTHER_TOTP_SECRET = 'KRSXG5CTMVRXEZLUKRSXG5CTMVRXEZLU';
 
 /** Seeded with raw rows for OWNER (institutions journey). */
 export const SEED = {
@@ -34,6 +35,10 @@ export const ACCOUNTS_SEED = {
   balanceAccount: '示例钱包账户',
   channel: '示例支付渠道',
 };
+
+/** The settings journey's own user (no rows: it starts without a user_preferences row). */
+export const SETTINGS_USER = { username: 'settings', password: 'e2e v1 settings password', displayName: '设置测试用户' };
+export const SETTINGS_TOTP_SECRET = 'MFRGGZDFMZTWQ2LKMFRGGZDFMZTWQ2LK';
 
 export function totp(secret: string, at = Date.now()): string {
   return new TOTP({ secret: Secret.fromBase32(secret), digits: 6, period: 30, algorithm: 'SHA1' }).generate({ timestamp: at });

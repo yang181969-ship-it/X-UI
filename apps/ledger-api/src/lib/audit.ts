@@ -17,9 +17,10 @@ export type AuditAction =
   | 'recovery.used'
   | 'session.revoke'
   | 'invite.accept'
-  // M2 (API_SPEC §3.7): detail holds ids (and card last4) only.
+  // M2 (API_SPEC §3.7): detail holds ids (and card last4) only — home_region changes hold the two region codes.
   | 'institution.delete'
-  | 'account.delete';
+  | 'account.delete'
+  | 'preferences.home_region';
 
 export async function audit(
   c: Context<AppBindings>,

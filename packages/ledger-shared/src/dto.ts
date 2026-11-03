@@ -32,6 +32,8 @@ export interface ErrorBody {
 
 export interface ProfileSettingsDto {
   homeRegion: string;
+  /** true while the user has no user_preferences row (homeRegion is then DEFAULT_HOME_REGION); false once saved, CN included. */
+  isDefault: boolean;
 }
 
 // ------------------------------------------------------------------ summaries (embedded in other DTOs)

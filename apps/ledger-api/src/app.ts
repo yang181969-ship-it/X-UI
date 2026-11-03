@@ -7,6 +7,7 @@ import type { AppBindings, Deps } from './env.ts';
 import { accountRoutes } from './routes/accounts.ts';
 import { authRoutes } from './routes/auth.ts';
 import { institutionRoutes } from './routes/institutions.ts';
+import { settingsRoutes } from './routes/settings.ts';
 import { setupRoutes } from './routes/setup.ts';
 import { EDITION, PRODUCT, systemRoutes } from './routes/system.ts';
 
@@ -20,6 +21,7 @@ export interface AppOptions {
 /** Every route group that requires a signed-in user. Also used by the auth-coverage test. */
 export const PROTECTED_MOUNTS = {
   '/system': systemRoutes,
+  '/settings': settingsRoutes,
   '/institutions': institutionRoutes,
   '/accounts': accountRoutes,
 } as const;

@@ -1,6 +1,6 @@
 # X-UI Product v1 — 数据模型（DATA_MODEL）
 
-> 状态：M1 表已实现；**M2 表已由迁移 `0001_m2_accounts` 实现（M2-B1，含 B1 加固：`user_preferences`、审计保留策略、`expires_on`、余额账户触发器）**；M2 API：机构（M2-B2.1）与账户及其币种（M2-B2.2）已实现，其余尚未实现。
+> 状态：M1 表已实现；**M2 表已由迁移 `0001_m2_accounts` 实现（M2-B1，含 B1 加固：`user_preferences`、审计保留策略、`expires_on`、余额账户触发器）**；M2 API：机构（M2-B2.1）、账户及其币种（M2-B2.2）与个人设置 `home_region`（M2-B2.3）已实现，其余尚未实现。
 > 相关文档：[PRODUCT_SPEC.md](PRODUCT_SPEC.md) · [API_SPEC.md](API_SPEC.md) · [TEST_PLAN.md](TEST_PLAN.md)
 
 ## 1. 通用约定
@@ -37,7 +37,13 @@
 | home_region | text | 否 | `'CN'` | 用户本国地区，ISO alpha-2；`CHECK(home_region GLOB '[A-Z][A-Z]')` |
 | created_at, updated_at | integer | 否 | | |
 
-每个用户至多一行；没有记录时按默认值（`CN`）处理，首次修改时创建。修改只影响之后新建的 M3 流水（M3 保存快照），不回写历史。
+每个用户至多一行；没有记录时按默认值（`CN`）处理，首次修改时创建（读取默认值不写入）。API 的 `isDefault` 由"是否存在该行"推导，不是数据库字段；保存与当前生效值相同的地区不写入（API_SPEC §3.1）。修改只影响之后新建的 M3 流水（M3 保存快照），不回写历史。
+
+历史规则（M2-B2.3 起明确，M3 实现）：
+
+1. M3 保存流水时，把**交易发生时**（保存时）该用户的 `home_region` 复制到 Event 的 `home_region` 快照列（§8.1）。
+2. 修改 `user_preferences.home_region` **不得**改变任何已存在流水的 `home_region` 快照；不提供、也不自动执行任何回写或批量重分类。
+3. 历史交易的境外判断只读取流水自身的快照，**不得**用当前的 `home_region` 重新解释。
 
 ### 3.1 `institutions` 金融机构
 
@@ -420,7 +426,7 @@ M3 的具体表名与其余字段在 M3 设计时确定；以下是 M2 对 M3 �
 | `card_id` | 实际使用的银行卡（可空）；复合外键 `(card_id, user_id)` → cards，NO ACTION |
 | `payment_channel_id` | 实际使用的支付渠道（可空）；复合外键 `(payment_channel_id, user_id)` → payment_channels，NO ACTION |
 | `transfer_method` | 转账方式（SWIFT、FPS、SEPA 等，M3 定义；替代原 `bank_transfer` 渠道类型） |
-| `home_region` | **快照**：保存时的 `home_region` |
+| `home_region` | **快照**：保存时该用户 `user_preferences.home_region` 的值（无记录时为 `CN`）；之后修改设置不改变此列，历史判断只读此列（§3.0） |
 
 ### 8.2 Entry：资金实际变动
 

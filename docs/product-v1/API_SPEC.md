@@ -1,6 +1,6 @@
 # X-UI Product v1 — API 规格（API_SPEC）
 
-> 状态：§2 为 M1 已实现接口；§3 起为 M2 设计（M2-A 修订版，含 M2-B1 加固）。**§3.2 金融机构已在 M2-B2.1 实现，§3.3 账户已在 M2-B2.2 实现**，其余 M2 接口尚未实现。
+> 状态：§2 为 M1 已实现接口；§3 起为 M2 设计（M2-A 修订版，含 M2-B1 加固）。**§3.2 金融机构已在 M2-B2.1 实现，§3.3 账户已在 M2-B2.2 实现，§3.1 个人设置已在 M2-B2.3 实现**，其余 M2 接口尚未实现。
 > 相关文档：[PRODUCT_SPEC.md](PRODUCT_SPEC.md) · [DATA_MODEL.md](DATA_MODEL.md) · [TEST_PLAN.md](TEST_PLAN.md)
 
 ## 1. 通用约定
@@ -60,8 +60,22 @@ M2 没有需要 step-up 的操作（不保存 PAN，没有查看卡号接口）�
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/settings/profile` | → `{ homeRegion: "CN" }`：当前用户的 `user_preferences`；没有记录时返回默认 `CN` |
-| PATCH | `/settings/profile` | `{ homeRegion }`，ISO alpha-2；写入（不存在则创建）当前用户的 `user_preferences` 行，不影响其他用户；只影响之后新建的 M3 流水，不回写历史 |
+| GET | `/settings/profile` | → `{ homeRegion: "CN", isDefault: true }`：当前用户的 `user_preferences`；没有记录时返回默认 `CN`（`isDefault: true`） |
+| PATCH | `/settings/profile` | `{ homeRegion }`，ISO alpha-2；写入（不存在则创建）当前用户的 `user_preferences` 行，不影响其他用户；只影响之后新建的 M3 流水，不回写历史；→ 与 GET 相同的 DTO |
+
+实现说明（M2-B2.3）：
+- 路径中没有用户 id：读写一律以会话用户为准，无法读取或修改他人的设置；请求体 `.strict()`，带 `userId` 等未知字段 → 400 `VALIDATION`。
+- DTO：`{ homeRegion, isDefault }`。`isDefault` 只表示"该用户还没有 `user_preferences` 记录"（由是否存在记录推导，无数据库字段）：无记录 → `{ "CN", true }`；有记录且为 `CN` → `{ "CN", false }`；有记录且为其他地区 → `false`。前端只在 `isDefault` 为 `true` 时显示"默认"标签。
+- `GET` 只读：没有记录时返回默认值，**不会**为此写入默认行。
+- `PATCH` → 200，返回保存后读取的当前设置（并发时可能已是稍后提交的另一请求的值）。"相同值"指与当前生效值相同（有记录时为记录值，无记录时为 `CN`）：不写入、不改 `updated_at`、不记审计，直接返回当前设置；因此无记录时保存 `CN` 不创建记录，`isDefault` 仍为 `true`。首次保存其他值创建记录，之后更新同一行（保留 `created_at`，更新 `updated_at`）；改回 `CN` 仍保存为一行（`isDefault: false`），不删除记录。
+- 并发与审计（M2-B2.3 复审修订）：`PATCH` 是**一个** `db.batch()`（libSQL 与 D1 上均为单个事务；D1 不支持交互式事务），含两条条件写入，二者都在事务内读取当前值，路由不预先读取旧值：
+  1. `INSERT INTO audit_log … SELECT … FROM users LEFT JOIN user_preferences WHERE users.id = 当前用户 AND coalesce(home_region, 'CN') <> 新值`：`detail = { from: 事务内的当前生效值, to: 新值, created: 是否尚无记录 }`；
+  2. `INSERT INTO user_preferences … SELECT …`（同一条件）`ON CONFLICT(user_id) DO UPDATE`：无记录时创建，有记录时更新。
+  写入在 SQLite 与 D1 上都是串行的：并发请求按提交顺序依次生效（后提交者覆盖先提交者），每条审计的 `from` 恰为该次实际替换的值，审计记录首尾相接、最后一条的 `to` 等于数据库中的值；同时保存同一值只产生一次变化与一条审计；同时首次保存只有一条 `created: true`。任一条语句失败 → 整个 batch 回滚（状态与审计都不写入），返回 500；服务端不自动重试。由于写入以当前值为条件，客户端重试是安全的（已生效则成为无变化的相同值保存）。不使用乐观锁或 409（个人设置采用"最后提交者生效"）。数据库约束（CHECK、外键、主键）全部保留，未新增迁移。
+- `homeRegion` 只接受 `@xui/ledger-shared` 的 ISO 3166-1 alpha-2 清单（`COUNTRY_CODES`，249 个正式代码；HK、MO、TW 为独立代码）：小写、三位代码、`XK` 等用户自定义代码、保留代码 `UK` → 400 `VALIDATION`，不写入任何数据。数据库 `CHECK(home_region GLOB '[A-Z][A-Z]')` 为最后防线。
+- 不使用全局 `settings` 表。值实际改变时记审计 `preferences.home_region`，`detail = { from, to, created }`（两个地区代码与是否为首次创建）；值未变不记录。
+- 认证、Origin、CSRF 沿用 M1：未登录 401，`PATCH` 缺 `x-xui-csrf` 或 Origin 不在白名单 → 403。
+- 历史：本接口不触及任何流水。M3 在保存流水时把当时的 `home_region` 复制进 Event（快照），之后的修改不改变已有快照，历史交易也不按当前 `home_region` 重新判断（DATA_MODEL §8.3）。
 
 ### 3.2 金融机构
 
@@ -266,7 +280,7 @@ M3 新建流水时：`exact_currency` 预填资金账户与扣款币种（扣款
 
 ### 3.7 审计
 
-M2 记录以下审计动作（detail 只含 id 与后四位）：`institution.delete`、`account.delete`、`card.create`、`card.delete`、`card_link.create`、`card_link.end`、`card_link.delete`、`channel.delete`、`preferences.home_region`。
+M2 记录以下审计动作（detail 只含 id 与后四位；`preferences.home_region` 只含修改前后的两个地区代码与是否首次创建 `{ from, to, created }`）：`institution.delete`、`account.delete`、`card.create`、`card.delete`、`card_link.create`、`card_link.end`、`card_link.delete`、`channel.delete`、`preferences.home_region`。
 
 审计记录的保留与内容限制见 DATA_MODEL §6.1：删除用户不删除其审计记录，记录中不得出现任何凭证。
 

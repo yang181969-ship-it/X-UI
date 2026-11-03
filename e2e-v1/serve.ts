@@ -1,7 +1,7 @@
 /**
  * Starts the X-UI v1 production build (apps/ledger-web/dist served by apps/ledger-api) against a
  * throwaway database in data/e2e-v1/, so browser runs never touch data/x-ui-v1.db or the legacy
- * app. Seeds three users and a few fictional rows (the accounts journey has its own user).
+ * app. Seeds four users and a few fictional rows (the accounts and settings journeys have their own users).
  */
 import { mkdirSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -12,7 +12,20 @@ import { accountCardLinks, accountCurrencies, accounts, cards, institutions, pay
 import { readEnv } from '../apps/ledger-api/src/env.ts';
 import { newId } from '../apps/ledger-api/src/lib/id.ts';
 import { legacyDbPaths, main, REPO_ROOT } from '../apps/ledger-api/src/node.ts';
-import { ACCOUNTS_SEED, ACCOUNTS_TOTP_SECRET, ACCOUNTS_USER, BASE_URL, E2E_V1_PORT, OTHER, OWNER, OWNER_TOTP_SECRET, SEED } from './fixtures.ts';
+import {
+  ACCOUNTS_SEED,
+  ACCOUNTS_TOTP_SECRET,
+  ACCOUNTS_USER,
+  BASE_URL,
+  E2E_V1_PORT,
+  OTHER,
+  OTHER_TOTP_SECRET,
+  OWNER,
+  OWNER_TOTP_SECRET,
+  SEED,
+  SETTINGS_TOTP_SECRET,
+  SETTINGS_USER,
+} from './fixtures.ts';
 
 const dir = resolve(REPO_ROOT, 'data/e2e-v1');
 rmSync(dir, { recursive: true, force: true });
@@ -39,7 +52,7 @@ const activate = async (input: typeof OWNER, totpSecret: string) => {
   return u;
 };
 const owner = await activate(OWNER, OWNER_TOTP_SECRET);
-const other = await activate(OTHER, 'KRSXG5CTMVRXEZLUKRSXG5CTMVRXEZLU');
+const other = await activate(OTHER, OTHER_TOTP_SECRET);
 
 const now = Date.now();
 const refBank = newId(now);
@@ -81,6 +94,9 @@ await db.insert(accountCurrencies).values([
 await db.insert(cards).values({ id: card, userId: acc.id, issuerInstitutionId: bank, name: ACCOUNTS_SEED.card, network: 'visa', cardType: 'debit', last4: '4242', issuingCountry: 'SG', createdAt: now, updatedAt: now });
 await db.insert(accountCardLinks).values({ id: newId(now), userId: acc.id, cardId: card, accountId: linked, currency: 'EUR', role: 'spending_source', isDefault: true, createdAt: now, updatedAt: now });
 await db.insert(paymentChannels).values({ id: newId(now), userId: acc.id, name: ACCOUNTS_SEED.channel, nameKey: ACCOUNTS_SEED.channel, channelType: 'payment_service', balanceAccountId: wallet, createdAt: now, updatedAt: now });
+
+// The settings journey's own user: no user_preferences row, so it starts on the default (CN).
+await activate(SETTINGS_USER, SETTINGS_TOTP_SECRET);
 client.close();
 
 await main();

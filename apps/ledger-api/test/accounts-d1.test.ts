@@ -2,68 +2,26 @@
 // getPlatformProxy — persist: false, remoteBindings: false; no remote D1 is ever contacted).
 // Proves the multi-statement writes are D1 batches: all-or-nothing, and within D1's limit of 100
 // bound parameters per statement (30 currencies), and that the database guards hold on D1 too.
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { drizzle } from 'drizzle-orm/d1';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { getPlatformProxy, unstable_splitSqlQuery } from 'wrangler';
-import { createApp } from '../src/app.ts';
-import { MIGRATIONS_DIR, type DB } from '../src/db/client.ts';
-import { assertD1Identity } from '../src/db/d1-identity.ts';
-import * as schema from '../src/db/schema.ts';
-import type { Deps } from '../src/env.ts';
-import { login, makeUser, testEnv, type TestEnv } from './helpers.ts';
+import { errorText, startD1App, type D1, type D1App } from './d1-app.ts';
+import { login, makeUser, type TestEnv } from './helpers.ts';
 
-type D1 = Parameters<typeof drizzle>[0];
-
-let dir = '';
-let proxy: Awaited<ReturnType<typeof getPlatformProxy<{ DB: D1 }>>> | undefined;
+let harness: D1App | undefined;
 let d1: D1;
 let t: TestEnv;
-
-const errorText = (e: unknown) => {
-  const out: string[] = [];
-  for (let cur: any = e, i = 0; cur && i < 6; cur = cur.cause, i++) out.push(String(cur.message ?? cur));
-  return out.join(' | ');
-};
+let all: D1App['all'];
 
 beforeAll(async () => {
-  dir = mkdtempSync(join(tmpdir(), 'xui-accounts-d1-'));
-  const config = join(dir, 'wrangler.json');
-  writeFileSync(config, JSON.stringify({ name: 'xui-v1-accounts-d1', compatibility_date: '2026-10-01', d1_databases: [{ binding: 'DB', database_name: 'xui-v1-accounts-d1', database_id: '00000000-0000-0000-0000-000000000000' }] }));
-  process.env.WRANGLER_CACHE_DIR = join(dir, 'cache');
-  proxy = await getPlatformProxy<{ DB: D1 }>({ configPath: config, persist: false, envFiles: [], remoteBindings: false });
-  d1 = proxy.env.DB;
-  // As `wrangler d1 migrations apply`: journal order, wrangler's own SQL splitter.
-  const tags = (JSON.parse(readFileSync(join(MIGRATIONS_DIR, 'meta/_journal.json'), 'utf8')) as { entries: { tag: string }[] }).entries.map((e) => e.tag);
-  for (const tag of tags) for (const statement of unstable_splitSqlQuery(readFileSync(join(MIGRATIONS_DIR, `${tag}.sql`), 'utf8'))) await d1.prepare(statement).run();
-  await assertD1Identity(d1);
-
-  // The app exactly as worker.ts builds it, with the test clock and environment.
-  const db = drizzle(d1, { schema }) as unknown as DB;
-  const clock = { t: new Date(2026, 9, 15, 10, 0, 0).getTime() };
-  const deps: Deps = { db, env: testEnv(), now: () => clock.t };
-  const app = createApp(deps, { clientIp: () => '10.0.0.1' });
-  t = { app, deps, db, clock, advance: (ms: number) => (clock.t += ms) } as unknown as TestEnv;
+  harness = await startD1App('xui-v1-accounts-d1');
+  ({ d1, t, all } = harness);
 }, 180_000);
 
 afterAll(async () => {
-  await proxy?.dispose();
-  if (dir) rmSync(dir, { recursive: true, force: true });
+  await harness?.dispose();
 });
 
 // See m2-schema.test.ts: the proxy's keep-alive socket can go stale between cases.
-beforeEach(async () => {
-  for (let attempt = 1; ; attempt++) {
-    try {
-      await d1.prepare('SELECT 1').first();
-      return;
-    } catch (e) {
-      if (!/fetch failed|ECONNRESET|socket hang up/i.test(errorText(e)) || attempt >= 3) throw e;
-    }
-  }
-});
+beforeEach(() => harness!.ping());
 
 let users = 0;
 async function signIn() {
@@ -72,7 +30,6 @@ async function signIn() {
 }
 type Api = Awaited<ReturnType<typeof login>>;
 
-const all = async (sql: string, ...args: unknown[]) => ((await d1.prepare(sql).bind(...args).all()).results ?? []) as Record<string, unknown>[];
 const currencies = (accountId: string) => all('SELECT currency, is_default, status, sort FROM account_currencies WHERE account_id = ? ORDER BY sort', accountId);
 
 async function institution(api: Api, name = 'Wise') {

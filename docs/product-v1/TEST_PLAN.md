@@ -1,6 +1,6 @@
 # X-UI Product v1 — 测试计划（TEST_PLAN）
 
-> 状态：§1 为 M1 已有测试；**§2 起为 M2 测试设计（M2-A 修订版）；§3.12 的数据库用例、R-2、R-3、R-5、A-12（schema 与服务层）、H-3（数据库层）、D-3 已在 M2-B1 实现**，API 用例尚未实现；**M2-B2.1 已实现机构 API 用例（`institutions.test.ts`：I-1 – I-5、X-1 – X-4、U-1 – U-3 中与机构相关部分、R-1）、敏感扫描单元测试（`sensitive.test.ts`）与机构浏览器测试（`e2e-v1/institutions.spec.ts`）；M2-B2.2 已实现账户 API 用例（`accounts.test.ts`：A-1 – A-12、D-1、D-2（账户币种部分）、D-4、D-7 以及 X-1 – X-4、U-1 – U-3、R-1 中与账户相关部分）、新建账户须为有效机构（已归档 → 409、恢复后成功、他人机构恒为 404、归档与创建竞争）、替换币种在中间步骤失败时完整回滚（币种集合、默认 USD、`updated_at`、关联均不变），后两类在 libSQL 与本地 D1（`accounts-d1.test.ts`）均验证与账户浏览器测试（`e2e-v1/accounts.spec.ts`，独立测试用户）**。
+> 状态：§1 为 M1 已有测试；**§2 起为 M2 测试设计（M2-A 修订版）；§3.12 的数据库用例、R-2、R-3、R-5、A-12（schema 与服务层）、H-3（数据库层）、D-3 已在 M2-B1 实现**，API 用例尚未实现；**M2-B2.1 已实现机构 API 用例（`institutions.test.ts`：I-1 – I-5、X-1 – X-4、U-1 – U-3 中与机构相关部分、R-1）、敏感扫描单元测试（`sensitive.test.ts`）与机构浏览器测试（`e2e-v1/institutions.spec.ts`）；M2-B2.2 已实现账户 API 用例（`accounts.test.ts`：A-1 – A-12、D-1、D-2（账户币种部分）、D-4、D-7 以及 X-1 – X-4、U-1 – U-3、R-1 中与账户相关部分）、新建账户须为有效机构（已归档 → 409、恢复后成功、他人机构恒为 404、归档与创建竞争）、替换币种在中间步骤失败时完整回滚（币种集合、默认 USD、`updated_at`、关联均不变），后两类在 libSQL 与本地 D1（`accounts-d1.test.ts`）均验证与账户浏览器测试（`e2e-v1/accounts.spec.ts`，独立测试用户）；M2-B2.3 已实现个人设置 API 用例（`settings.test.ts`：H-1 – H-4、H-6、D-6、R-1 中与设置相关部分（H-5 为 M3 规则），同一组用例在 libSQL 与本地 D1 各执行一次）与设置浏览器测试（`e2e-v1/settings.spec.ts`，独立测试用户）**。
 > 相关文档：[PRODUCT_SPEC.md](PRODUCT_SPEC.md) · [DATA_MODEL.md](DATA_MODEL.md) · [API_SPEC.md](API_SPEC.md)
 
 ## 0. 运行方式与准入标准
@@ -147,9 +147,12 @@ M2-B 完成标准：
 
 | ID | 场景 | 断言 |
 |---|---|---|
-| H-1 | `home_region` 默认值 | 未设置时 `GET /settings/profile` → `CN` |
+| H-1 | `home_region` 默认值 | 未设置时 `GET /settings/profile` → `{ homeRegion: CN, isDefault: true }`；保存后（含保存 `CN`）`isDefault: false` |
 | H-2 | 修改 | `PATCH` 为 `HK` 后读取为 `HK`；`hk`、`CHN` → 400 |
-| H-3 | 每个用户独立 | 用户 A 改为 `HK` 后用户 B 仍为 `CN`（或其自己的值）；`settings` 中不出现 `home_region`；数据库层：每用户一行、默认 `CN`、CHECK、外键（SQLite 与 D1） |
+| H-3 | 每个用户独立 | 用户 A 改为 `HK` 后用户 B 仍为 `CN`（或其自己的值）；`settings` 中不出现 `home_region`；请求体带 `userId` → 400，B 不变；数据库层：每用户一行、默认 `CN`、CHECK、外键（SQLite 与 D1） |
+| H-4 | 读取不写入、upsert、相同值 | 无记录时 `GET` 不写入任何数据（整库快照不变；`user_preferences` 上的禁止写入触发器不被触发）；首次 `PATCH` 创建一行（`created_at = updated_at`，审计 `created: true`）；再次 `PATCH` 更新同一行（`created_at` 不变，审计 `created: false`），不产生重复行；保存与当前值相同的地区（含无记录时保存 `CN`）整库不变：不写审计、不改 `updated_at`，返回当前设置 |
+| H-6 | 并发与原子性（libSQL 与 D1） | 同时两次首次保存（同值 / 不同值）、同时改为不同地区、同时改为相同地区、另一请求在本请求写入前提交：审计记录首尾相接（第一条 `from = CN`，每条 `from` 为实际被替换的值且 `from ≠ to`，只有第一条 `created: true`，最后一条 `to` 等于数据库值），只有一行；两个用户并发互不影响。写入中途失败（审计之后的偏好写入失败，或审计本身失败）→ 500，整库不变；之后重试只生效一次 |
+| H-5 | 历史快照规则（M3） | M3 保存流水时写入当时的 `home_region` 快照；修改设置后已有流水的快照不变；历史流水的境外判断只读快照，不用当前 `home_region` 重新解释（M3-1、M3-3） |
 
 （M3 的快照与历史不变性测试见 §5。）
 
@@ -174,7 +177,7 @@ M2-B 完成标准：
 | D-3 | 删除用户的级联清理 | 用户 A、B 各有完整 M2 数据（机构、多币种账户、卡、关联、渠道、来源、`user_preferences`）与认证数据（会话、Passkey、恢复码、审计）。原始 SQL `DELETE FROM users WHERE id = A` 成功（v1 无删除用户接口）；A 在**每张带 `user_id` CASCADE 外键的表**中行数为 0；`audit_log` 中 A 的记录按保留策略原样保留（DATA_MODEL §6.1），且经真实认证流程写入的审计记录不含任何凭证；B 的行数与删除前一致；`PRAGMA foreign_key_check` 为空 |
 | D-4 | 余额渠道引用的账户不能删除 | PayPal 渠道的余额账户 → `DELETE /accounts/:id` 409 `IN_USE`（`details.references` 指出渠道）；原始 SQL 删除 → 外键失败；解除余额账户后可删除 |
 | D-5 | 历史流水引用的账户不能删除 | **M3 实现**：被 Entry 引用的账户、账户币种、银行卡、支付渠道 → 409 `IN_USE`；原始 SQL 删除 → 外键失败（M3-6） |
-| D-6 | 修改 `home_region` 不改写数据 | M2：`PATCH /settings/profile` 前后，除 `user_preferences` 中当前用户一行外，所有表内容一致。M3：已有 Event 的 `home_region` 快照不变（M3-3） |
+| D-6 | 修改 `home_region` 不改写数据 | M2：`PATCH /settings/profile` 前后，除 `user_preferences` 中当前用户一行与新增的一条 `preferences.home_region` 审计记录外，所有表内容一致（其他用户的设置行不变）。M3：已有 Event 的 `home_region` 快照不变（M3-3） |
 | D-7 | 修改账户国家不改写数据 | M2：`PATCH /accounts/:id { accountCountry }` 前后，除该账户行外所有表内容一致。M3：已有 Entry 的 `funding_account_country` 快照与统计不变（M3-2） |
 
 ### 3.12 SQLite 与 D1 双环境约束测试
@@ -208,15 +211,15 @@ M2-B 完成标准：
 6. 新建 PayPal 渠道：余额账户 + 卡片来源；新建 Apple Pay：只能选择卡片。
 7. 搜索、筛选、状态切换（冻结、关闭、显示已关闭）。
 8. 全页面断言：不出现"余额"、金额合计或换算金额；控制台无错误（除匿名 `/auth/me` 401）。
-9. 设置 → 通用：本国地区默认显示 CN，可修改。
+9. 设置 → 通用：本国地区默认显示 CN（带"默认"标记与说明，读取后数据库中无该用户的设置行），可修改；保存成功与失败均有提示，失败时已保存的值不变；刷新页面、退出并重新登录后仍为新值；另一用户仍为 CN；中英文界面均显示用途说明与"不会自动重分类历史交易"。
 
 ## 5. M3 测试要求（Event / Entry 与历史完整性，届时实现）
 
 | ID | 场景 | 断言 |
 |---|---|---|
-| M3-1 | 快照写入 | Event 保存 `event_currency`、`event_amount`、`card_id`、`payment_channel_id`、`home_region`；Entry 保存 `funding_account_id`、`funding_currency`、`amount`、`funding_account_country` |
+| M3-1 | 快照写入 | Event 保存 `event_currency`、`event_amount`、`card_id`、`payment_channel_id`、`home_region`（保存时用户设置的值，无记录时为 `CN`）；Entry 保存 `funding_account_id`、`funding_currency`、`amount`、`funding_account_country` |
 | M3-2 | 修改账户国家 | 之后历史流水的 `funding_account_country` 与统计结果不变 |
-| M3-3 | 修改 `home_region` | 历史流水的境外判断与统计不变 |
+| M3-3 | 修改 `home_region` | 修改后已有 Event 的 `home_region` 快照逐行不变；历史流水的境外判断与统计不变（只读快照，不用当前 `home_region` 重新解释）；修改后新建的流水使用新值 |
 | M3-4 | 结束/删除关联 | 历史流水的资金账户、银行卡、渠道与统计不变 |
 | M3-5 | 不重算 | 默认来源查找结果变化后，历史流水不变 |
 | M3-6 | 删除保护 | 被流水引用的账户、银行卡、支付渠道删除 → 409 `IN_USE`；原始 SQL 删除 → 外键失败 |
