@@ -77,6 +77,14 @@ export type SpendingMatch = (typeof SPENDING_MATCHES)[number];
 export const NO_MATCH_REASONS = ['card_inactive', 'no_eligible_link'] as const;
 export type NoMatchReason = (typeof NO_MATCH_REASONS)[number];
 
+/**
+ * Why a (not ended) link of the card was not eligible as a spending source (M2-B4 explanation of
+ * the recommendation; DATA_MODEL §5 eligible(link)), checked in this order.
+ * currency_closed: the link's own currency is closed, or (all-currency link) the account has no active currency.
+ */
+export const SPENDING_SKIP_REASONS = ['not_spending_source', 'link_suspended', 'account_inactive', 'currency_closed'] as const;
+export type SpendingSkipReason = (typeof SPENDING_SKIP_REASONS)[number];
+
 // ------------------------------------------------------------------ user preferences
 
 /**
@@ -99,6 +107,7 @@ export const LEDGER_ERROR_CODES = [
   'IN_USE',
   'CURRENCY_IN_USE',
   'INSTITUTION_ARCHIVED',
+  'LINK_STATE',
 ] as const;
 export type LedgerErrorCode = (typeof LEDGER_ERROR_CODES)[number];
 

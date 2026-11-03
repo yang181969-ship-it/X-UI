@@ -1,4 +1,6 @@
 import type { CardLinkDto } from '@xui/ledger-shared';
+import { and, eq } from 'drizzle-orm';
+import type { DB } from '../db/client.ts';
 import { accountCardLinks, accounts, cards, institutions, paymentChannels } from '../db/schema.ts';
 
 /** Column selections for the summaries embedded in M2 DTOs, and the card-link DTO (shared by the account and card routes). */
@@ -33,3 +35,11 @@ export const toLinkDto = ({ link: l, card, account }: { link: LinkRow; card: Car
   createdAt: l.createdAt,
   updatedAt: l.updatedAt,
 });
+
+/** Links joined with their card and account summaries (same user on every side, as the composite keys require); callers add where / orderBy and map rows with toLinkDto. */
+export const selectLinkDtos = (db: DB) =>
+  db
+    .select({ link: accountCardLinks, card: cardSummary, account: accountSummary })
+    .from(accountCardLinks)
+    .innerJoin(cards, and(eq(cards.id, accountCardLinks.cardId), eq(cards.userId, accountCardLinks.userId)))
+    .innerJoin(accounts, and(eq(accounts.id, accountCardLinks.accountId), eq(accounts.userId, accountCardLinks.userId)));

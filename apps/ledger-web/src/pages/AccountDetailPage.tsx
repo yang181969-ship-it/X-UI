@@ -1,6 +1,6 @@
 import { ArrowLeftOutlined, DeleteOutlined, EditOutlined, PauseCircleOutlined, PlayCircleOutlined, StopOutlined, UndoOutlined } from '@ant-design/icons';
 import { Button, Card, Descriptions, Empty, Skeleton, Space, Tag, Typography } from 'antd';
-import type { AccountDetail, CardLinkDto, ChannelSummary } from '@xui/ledger-shared';
+import type { AccountDetail, ChannelSummary } from '@xui/ledger-shared';
 import dayjs from 'dayjs';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -15,11 +15,12 @@ import { AccountFormModal } from './accounts/AccountFormModal.tsx';
 import { AccountStatusTag, accountSubtitle } from './accounts/AccountsTab.tsx';
 import { CurrencyModal } from './accounts/CurrencyModal.tsx';
 import { useAccountActions } from './accounts/useAccountActions.ts';
+import { CardLinksPanel } from './links/CardLinks.tsx';
 
 /**
- * /accounts/:id (PRODUCT_SPEC §4.5): details, currencies, linked cards (read-only until the cards
- * step — grouped by currency scope, ended links in a history section), and the payment channels
- * using the account. No balance or amount is shown anywhere.
+ * /accounts/:id (PRODUCT_SPEC §4.5): details, currencies, linked cards (managed here with the same
+ * component as on the card page — grouped by currency scope, ended links in a history section), and
+ * the payment channels using the account. No balance or amount is shown anywhere.
  */
 export function AccountDetailPage() {
   const { t } = useTranslation();
@@ -102,9 +103,7 @@ export function AccountDetailPage() {
           >
             <CurrencyList account={account} />
           </Card>
-          <Card title={t('accounts.cardLinks')} className="account-links">
-            <CardLinks links={account.links} />
-          </Card>
+          <CardLinksPanel owner={{ side: 'account', account }} links={account.links} />
           <Card title={t('accounts.channels')} className="account-channels">
             <ChannelList title={t('accounts.channelAsFunds')} items={account.balanceOfChannels} />
             <ChannelList title={t('accounts.channelAsSource')} items={account.sourceOfChannels} />
@@ -188,52 +187,6 @@ function CurrencyList({ account }: { account: AccountDetail }) {
           {closed.map(row)}
         </section>
       )}
-    </>
-  );
-}
-
-/** Links grouped by currency scope; ended links (history) last. Read-only in this step (cards link to their page). */
-function CardLinks({ links }: { links: CardLinkDto[] }) {
-  const { t } = useTranslation();
-  const current = links.filter((l) => l.status !== 'ended');
-  const ended = links.filter((l) => l.status === 'ended');
-  const scopes = [...new Set(current.map((l) => l.currency))].sort((a, b) => (a === null ? -1 : b === null ? 1 : a.localeCompare(b)));
-  const row = (l: CardLinkDto) => (
-    <div key={l.id} className="row-item" data-link={l.id}>
-      <div className="row-main">
-        <div className="row-title">
-          <Link to={`/cards/${encodeURIComponent(l.cardId)}`}>{l.card.name}</Link> <span className="muted">•••• {l.card.last4}</span>
-        </div>
-        <div className="row-sub">
-          {t(`accounts.roles.${l.role}`)}
-          {l.startedOn && ` · ${l.startedOn}`}
-          {l.endedOn && ` – ${l.endedOn}`}
-        </div>
-      </div>
-      <Space size={4}>
-        {l.isDefault && <Tag color="blue">{t('accounts.defaultSource')}</Tag>}
-        {l.status !== 'active' && <Tag>{t(`accounts.linkStatuses.${l.status}`)}</Tag>}
-      </Space>
-    </div>
-  );
-  return (
-    <>
-      {links.length === 0 && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('accounts.cardLinksEmpty')} />}
-      {scopes.map((scope) => (
-        <section key={scope ?? 'all'} className="ref-section">
-          <Typography.Title level={5}>{scope ?? t('accounts.scopeAll')}</Typography.Title>
-          {current.filter((l) => l.currency === scope).map(row)}
-        </section>
-      ))}
-      {ended.length > 0 && (
-        <section className="ref-section link-history">
-          <Typography.Title level={5}>{t('accounts.linkHistory')}</Typography.Title>
-          {ended.map(row)}
-        </section>
-      )}
-      <Typography.Paragraph type="secondary" className="field-note">
-        {t('accounts.cardLinksLater')}
-      </Typography.Paragraph>
     </>
   );
 }

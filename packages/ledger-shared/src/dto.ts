@@ -16,6 +16,7 @@ import type {
   InstitutionType,
   LedgerErrorCode,
   NoMatchReason,
+  SpendingSkipReason,
 } from './enums.ts';
 
 /**
@@ -255,7 +256,38 @@ export interface PaymentChannelDetail extends PaymentChannelDto {
 
 // ------------------------------------------------------------------ spending-source recommendation (DATA_MODEL §5)
 
-export interface SpendingSourceExact {
+/**
+ * One (not ended) link of the card as the recommendation saw it (M2-B4 addition, for explaining the
+ * result; the spec fields of the result are unchanged). Ended links are history and never considered.
+ */
+export interface SpendingSourceCandidate {
+  linkId: string;
+  account: AccountSummary;
+  /** The link's currency scope (null = every currency of the account). */
+  currency: string | null;
+  role: CardLinkRole;
+  status: CardLinkStatus;
+  isDefault: boolean;
+  priority: number | null;
+  /** Active currencies the link can fund from (account default first, then by sort); [] when none. */
+  scope: string[];
+  /** null = eligible; otherwise the first rule it failed. */
+  skipped: SpendingSkipReason | null;
+  /** Eligible and its scope holds the event currency. */
+  exact: boolean;
+}
+
+interface SpendingSourceExplained {
+  /**
+   * Decision order: eligible links holding the event currency (ranked), then the other eligible
+   * links (ranked), then the ineligible ones (ranked). When a source is recommended it is
+   * considered[0]. Rank: default first, currency-specific before all-currency, priority ascending
+   * (none last), then oldest. Empty when the card itself is not active.
+   */
+  considered: SpendingSourceCandidate[];
+}
+
+export interface SpendingSourceExact extends SpendingSourceExplained {
   match: 'exact_currency';
   eventCurrency: string;
   accountId: string;
@@ -264,7 +296,7 @@ export interface SpendingSourceExact {
   fundingCurrency: string;
 }
 
-export interface SpendingSourceConversion {
+export interface SpendingSourceConversion extends SpendingSourceExplained {
   match: 'conversion_required';
   eventCurrency: string;
   accountId: string;
@@ -275,10 +307,20 @@ export interface SpendingSourceConversion {
   candidateCurrencies: string[];
 }
 
-export interface SpendingSourceNoMatch {
+export interface SpendingSourceNoMatch extends SpendingSourceExplained {
   match: 'no_match';
   eventCurrency: string;
   reason: NoMatchReason;
 }
 
 export type SpendingSourceResult = SpendingSourceExact | SpendingSourceConversion | SpendingSourceNoMatch;
+
+/** details of a 409 LINK_STATE: the link's current status does not allow the operation (M2-B4). */
+export interface LinkStateDetails {
+  status: CardLinkStatus;
+}
+
+/** details of a 409 DUPLICATE: the existing record (an institution, or the unfinished link with the same card, account, scope and role). */
+export interface DuplicateDetails {
+  existingId: string;
+}

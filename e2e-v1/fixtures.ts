@@ -21,7 +21,7 @@ export const SEED = {
 
 /**
  * The accounts journey signs in as its own user, so its data never changes what the institutions
- * journey counts. Cards, card links and payment channels have no API or UI yet: seeded as rows.
+ * journey counts. Its cards, card links and payment channel are seeded as rows (a fixed starting state).
  */
 export const ACCOUNTS_USER = { username: 'accounts', password: 'e2e v1 accounts password', displayName: '账户测试用户' };
 export const ACCOUNTS_TOTP_SECRET = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
@@ -42,7 +42,7 @@ export const SETTINGS_TOTP_SECRET = 'MFRGGZDFMZTWQ2LKMFRGGZDFMZTWQ2LK';
 
 /**
  * The cards journey's own user. Card expiries are seeded relative to the day the server starts
- * (this month = expiring soon, last month = expired). Card links have no API yet: seeded as rows.
+ * (this month = expiring soon, last month = expired). Its card links are seeded as rows (a fixed starting state).
  * All names and last-four digits are fictional.
  */
 export const CARDS_USER = { username: 'cards', password: 'e2e v1 cards password', displayName: '银行卡测试用户' };
@@ -68,6 +68,26 @@ export const CARDS_SEED = {
   /** Another user's card, with a fixed id so the journey can try to open it. */
   otherUsersCard: 'Other User Secret Card',
   otherUsersCardId: 'e2e-other-user-card',
+};
+
+/**
+ * The card-links journey's own user (M2-B4): a multi-currency account (HKD default, EUR), a USD
+ * account, a debit card and a virtual card — no links: the journey creates them through the UI.
+ */
+export const LINKS_USER = { username: 'links', password: 'e2e v1 links password', displayName: '关联测试用户' };
+export const LINKS_TOTP_SECRET = 'NBSWY3DPNBSWY3DPNBSWY3DPNBSWY3DP';
+export const LINKS_SEED = {
+  emi: '示例多币种机构',
+  /** e_money, BE, HKD (default) / EUR. */
+  multi: '示例多币种账户',
+  /** bank, SG, USD only. */
+  usd: '示例美元账户',
+  card: '示例多币种借记卡',
+  cardLast4: '8642',
+  virtualCard: '示例虚拟卡',
+  virtualLast4: '9753',
+  /** Another user's account, with a fixed id: never offered or reachable. */
+  otherUsersAccount: 'Other User Hidden Account',
 };
 
 export function totp(secret: string, at = Date.now()): string {

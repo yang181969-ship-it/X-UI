@@ -1,6 +1,6 @@
 import { ArrowLeftOutlined, DeleteOutlined, EditOutlined, PauseCircleOutlined, PlayCircleOutlined, StopOutlined, UndoOutlined } from '@ant-design/icons';
 import { Button, Card, Descriptions, Empty, Skeleton, Space, Tag, Typography } from 'antd';
-import { cardExpiry, type CardDetail, type CardLinkDto } from '@xui/ledger-shared';
+import { cardExpiry, type CardDetail } from '@xui/ledger-shared';
 import dayjs from 'dayjs';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -14,12 +14,15 @@ import { PageTop } from '../layouts/PanelLayout.tsx';
 import { regionName } from '../lib/regions.ts';
 import { CardFormModal } from './cards/CardFormModal.tsx';
 import { useCardActions } from './cards/useCardActions.tsx';
+import { CardLinksPanel } from './links/CardLinks.tsx';
+import { SpendingSourcePreview } from './links/SpendingSourcePreview.tsx';
 import { CardStatusTag, cardSubtitle } from './CardsPage.tsx';
 
 /**
  * /cards/:id (PRODUCT_SPEC §4.5): the card face (only "•••• 1234"), its details, the linked
- * accounts with their own jurisdiction (history included; read-only until the links step) and the
- * payment channels using it. No balance or amount is shown anywhere.
+ * accounts with their own jurisdiction (managed here: add, edit, default, suspend / resume, end,
+ * delete; history included), the spending-source preview and the payment channels using it. No
+ * balance or amount is shown anywhere.
  */
 export function CardDetailPage() {
   const { t } = useTranslation();
@@ -86,9 +89,8 @@ export function CardDetailPage() {
             </div>
           </Card>
           <CardInfo card={card} today={today} />
-          <Card title={t('cards.linkedAccounts')} className="card-links">
-            <LinkedAccounts links={card.links} />
-          </Card>
+          <CardLinksPanel owner={{ side: 'card', card }} links={card.links} />
+          <SpendingSourcePreview card={card} />
           <Card title={t('cards.channels')} className="card-channels">
             {card.channels.length === 0 ? (
               <Typography.Text type="secondary">{t('cards.channelsEmpty')}</Typography.Text>
@@ -150,46 +152,5 @@ function CardInfo({ card, today }: { card: CardDetail; today: string }) {
         {t('cards.regionsNote')}
       </Typography.Paragraph>
     </Card>
-  );
-}
-
-/** Linked accounts with their own jurisdiction; ended links (history) last. Read-only in this step. */
-function LinkedAccounts({ links }: { links: CardLinkDto[] }) {
-  const { t, i18n } = useTranslation();
-  const current = links.filter((l) => l.status !== 'ended');
-  const ended = links.filter((l) => l.status === 'ended');
-  const row = (l: CardLinkDto) => (
-    <div key={l.id} className="row-item" data-link={l.id}>
-      <div className="row-main">
-        <div className="row-title">
-          <Link to={`/accounts/${encodeURIComponent(l.accountId)}`}>{l.account.name}</Link>
-        </div>
-        <div className="row-sub">
-          {t('cards.accountCountry')}: {regionName(l.account.accountCountry, i18n.language)} ({l.account.accountCountry}) · {t(`accounts.roles.${l.role}`)} · {l.currency ?? t('accounts.scopeAll')}
-          {l.startedOn && ` · ${l.startedOn}`}
-          {l.endedOn && ` – ${l.endedOn}`}
-        </div>
-      </div>
-      <Space size={4}>
-        {l.isDefault && <Tag color="blue">{t('accounts.defaultSource')}</Tag>}
-        {l.status !== 'active' && <Tag>{t(`accounts.linkStatuses.${l.status}`)}</Tag>}
-        {l.account.status !== 'active' && <Tag>{t(`accounts.statuses.${l.account.status}`)}</Tag>}
-      </Space>
-    </div>
-  );
-  return (
-    <>
-      {links.length === 0 && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('cards.linkedAccountsEmpty')} />}
-      {current.length > 0 && <section className="ref-section">{current.map(row)}</section>}
-      {ended.length > 0 && (
-        <section className="ref-section link-history">
-          <Typography.Title level={5}>{t('cards.linkHistory')}</Typography.Title>
-          {ended.map(row)}
-        </section>
-      )}
-      <Typography.Paragraph type="secondary" className="field-note">
-        {t('cards.linksLater')}
-      </Typography.Paragraph>
-    </>
   );
 }

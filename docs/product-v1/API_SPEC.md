@@ -1,6 +1,6 @@
 # X-UI Product v1 — API 规格（API_SPEC）
 
-> 状态：§2 为 M1 已实现接口；§3 起为 M2 设计（M2-A 修订版，含 M2-B1 加固）。**§3.2 金融机构已在 M2-B2.1 实现，§3.3 账户已在 M2-B2.2 实现，§3.1 个人设置已在 M2-B2.3 实现，§3.4 银行卡的 CRUD 已在 M2-B3 实现（`spending-source` 推荐除外）**，其余 M2 接口尚未实现。
+> 状态：§2 为 M1 已实现接口；§3 起为 M2 设计（M2-A 修订版，含 M2-B1 加固）。**§3.2 金融机构已在 M2-B2.1 实现，§3.3 账户已在 M2-B2.2 实现，§3.1 个人设置已在 M2-B2.3 实现，§3.4 银行卡的 CRUD 已在 M2-B3 实现，§3.5 银行卡-账户关联与 §3.4.1 `spending-source` 推荐已在 M2-B4 实现**，§3.6 支付渠道尚未实现。
 > 相关文档：[PRODUCT_SPEC.md](PRODUCT_SPEC.md) · [DATA_MODEL.md](DATA_MODEL.md) · [TEST_PLAN.md](TEST_PLAN.md)
 
 ## 1. 通用约定
@@ -31,6 +31,7 @@
 | `IN_USE` | 409 | 被引用，不能删除；`details.references` 给出引用计数 |
 | `CURRENCY_IN_USE` | 409 | 币种被关联引用，不能移除（应改为关闭） |
 | `INSTITUTION_ARCHIVED` | 409 | 机构已归档，不能新建账户（先恢复机构）；`details.institutionId`（M2-B2.2 复审新增） |
+| `LINK_STATE` | 409 | 关联当前的状态不允许该操作：已结束的关联不能再改状态、用途、优先级或设为默认，暂停的关联不能设为默认；`details.status`（M2-B4 新增） |
 
 ## 2. M1 已实现接口（不变）
 
@@ -174,7 +175,7 @@ M2 没有需要 step-up 的操作（不保存 PAN，没有查看卡号接口）�
 - 不接受 `pan`、`cardNumber`、`bin`、`cvv`、`pin`、`holderName` 等字段（400 `VALIDATION`）。
 
 实现说明（M2-B3）：
-- 已实现 `GET /cards`、`POST /cards`、`GET /cards/:id`、`PATCH /cards/:id`、`DELETE /cards/:id`。`GET /cards/:id/spending-source`（§3.4.1）依赖关联，随关联步骤实现，本步骤未实现。未新增迁移，`0000`、`0001` 不变。
+- 已实现 `GET /cards`、`POST /cards`、`GET /cards/:id`、`PATCH /cards/:id`、`DELETE /cards/:id`。`GET /cards/:id/spending-source`（§3.4.1）依赖关联，已在 M2-B4 随关联实现。未新增迁移，`0000`、`0001` 不变。
 - 列表直接返回数组，按 `sort`、`name` 排序；`status` 缺省返回未停用的卡（`active`、`frozen`），`all` 返回全部；`q` 先做与 `name_key` 相同的规范化（NFKC → trim → 合并空白 → 小写），匹配卡片名称、发卡机构名称或后四位（`cards` 表没有 `name_key` 列，比较在服务端进行，`%`、`_` 按字面）；`issuerId` 按发卡机构；`accountId` 只匹配未结束的关联；`linkedAccounts` 为未结束关联的不同账户（含账户的 `accountCountry`）。查询参数严格校验（未知参数 → 400）。
 - **到期**（规则在 `@xui/ledger-shared` 的 `expiry.ts`，API 与前端共用同一函数）：
   - `expires_on`（`YYYY-MM`）表示卡片**有效至该月最后一天（含当天）**，闰年 2 月为 29 日；`daysLeft` = 该日 − `today`（整日数，按日历日期计算，与运行环境时区无关）。
@@ -238,6 +239,13 @@ M2 没有需要 step-up 的操作（不保存 PAN，没有查看卡号接口）�
 
 M3 新建流水时：`exact_currency` 预填资金账户与扣款币种（扣款金额可预填为原始金额，用户可改）；`conversion_required` 预填资金账户，用户必须选择扣款币种，扣款金额由用户依据真实交易记录填写或标记待补录；`no_match` 由用户自行选择。M2 不计算汇率与手续费。
 
+实现说明（M2-B4）：
+- 只读：卡片、其未结束的关联、这些关联的账户与账户币种在一个 `db.batch()` 中读取（同一快照）。batch 内不使用联表查询：drizzle 在 D1 的 batch 中按列名映射结果，联表的同名列（`id`、`status`）会互相覆盖。查询参数严格校验（`currency` 以外的参数 → 400）。
+- 排序：在 DATA_MODEL §5 的 `rank` 末尾增加 `id ASC`，同一毫秒创建的关联也有确定的顺序（结果稳定）。
+- 到期不影响推荐：只检查卡片的 `status`（M2-B3：已过期 ≠ 停用；推荐没有日期参数，M3 可能补录到期之前的交易）。已过期但状态为 `active` 的卡照常推荐，页面另以到期标签提示。
+- 解释（M2-B4 新增字段，规格原有字段不变）：三种结果都带 `considered`——该卡全部**未结束**关联的判断过程，按决策顺序排列：持有消费币种的合格关联（按 rank）→ 其余合格关联（按 rank）→ 不合格关联（按 rank）；有推荐时 `considered[0]` 就是推荐项。每项 `{ linkId, account（账户摘要）, currency, role, status, isDefault, priority, scope, skipped, exact }`：`scope` 为该关联可用的 active 币种（账户默认币种在前，其余按 `sort`）；`skipped` 为 `null`（合格）或第一个不满足的条件 `not_spending_source` / `link_suspended` / `account_inactive` / `currency_closed`；`exact` 表示合格且 `scope` 含消费币种。`card_inactive` 时 `considered` 为空数组。供 M3 由用户确认或纠正；不含任何金额、汇率或余额。
+- 隔离：卡片、关联、账户、币种四个读取都以当前用户限定；`considered` 只描述当前用户自己的关联与账户（账户摘要仅 `id`、`name`、`accountCountry`、`status`）。复合外键使跨用户关联无法写入；即使绕过外键存在这样的行，也会被排除（不返回 500，不出现他人资料）。他人的或不存在的卡 → 404 `{ error, code }`，不带任何解释字段（libSQL 上以关闭外键强行写入跨用户行验证；D1 无法关闭外键）。
+
 ### 3.5 银行卡-账户关联
 
 | 方法 | 路径 | 说明 |
@@ -271,6 +279,21 @@ M3 新建流水时：`exact_currency` 预填资金账户与扣款币种（扣款
 }
 ```
 
+实现说明（M2-B4）：
+- 已实现本节全部五个接口（以及 §3.4.1）。未新增迁移，`0000`、`0001` 不变：复用 `account_card_links` 表及其 CHECK、两个部分唯一索引与三条复合外键。DTO 另含 `createdAt`、`updatedAt`。
+- 查询：没有单独的关联列表接口；`GET /cards/:id` 与 `GET /accounts/:id` 的 `links` 列出全部关联（含 `ended`，以 `status` 区分），按 `created_at`、`id` 排序；列表摘要（`linkedAccounts`、`linkedCards`）与 `cardId` / `accountId` 筛选只看未结束的关联。
+- 多对多：一张卡可同时有多条关联（不同账户、币种范围、用途），一个账户可关联多张卡；同一组 `(卡, 账户, 币种范围, 用途)` 只能有一条未结束（`active` 或 `suspended`）的关联 → 409 `DUPLICATE`，`details.existingId` 为那一条；结束后可重新建立，历史记录保留。
+- `POST` → 201 + 关联 DTO。`cardId`、`accountId` 不是当前用户的（或不存在）→ 404——即使另一用户恰好有相同的关联，也是 404 而不是 409（先确认归属再报告重复）。`currency` 非空时须为该账户的 active 币种，否则 400 `CURRENCY_NOT_ON_ACCOUNT`（`null` = 账户全部币种）。`role` 缺省 `spending_source`；`isDefault` 仅限 `spending_source`（400 `VALIDATION`）；新关联恒为 `active`（请求体不接受 `status`、`endedOn`）；`startedOn` 可空，不推断。允许为已冻结 / 已关闭的卡或账户建立关联（记录历史），但它们在恢复有效之前不会被推荐。
+- `PATCH`：可改 `role`、`priority`（`null` 清除）、`notes`、`status`（`active` ⇄ `suspended`）。空请求体以及 `currency`、`cardId`、`accountId`、`isDefault`、`status: "ended"`、`endedOn` 等字段 → 400 `VALIDATION`：卡、账户与币种范围建立后不可修改（需要时解除关联、保留历史，再新建），默认标记只经 `/default` 设置。暂停时清除 `is_default`；把 `role` 改为非 `spending_source` 时同样清除（M2-B4 补充：规格未写明，与 CHECK `is_default = 0 OR role = 'spending_source'` 一致）；恢复为 `active` 或改回 `spending_source` 都不自动恢复默认。改 `role` 后与另一条未结束关联重复 → 409 `DUPLICATE`。没有"取消默认"接口（规格未定义）：默认只能被同范围的新默认替换，或随暂停 / 结束 / 改用途清除。
+- 已结束（`ended`）的关联只能修改 `notes`；修改 `role`、`priority`、`status`，设为默认或再次结束 → 409 `LINK_STATE`（`details.status = "ended"`）。暂停的关联设为默认 → 409 `LINK_STATE`（`"suspended"`）；非 `spending_source` 设为默认 → 400 `VALIDATION`（L-6）。
+- `POST /default`：请求体为空或 `{}`。已是默认 → 200，不写入。否则一个 batch：先清除同卡同币种范围（`ifnull(currency, '')`）的旧默认，再设置新默认；两条语句都以"目标仍是该用户 active 的 `spending_source`"为条件（事务内判断）——目标在读取之后被暂停、结束、改用途或删除时两条都不生效，旧默认保留，返回 409 / 400 / 404。"所有币种"与某一币种（如 `USD`）是不同的范围，各自至多一个默认。并发设默认依提交顺序生效，任何时刻至多一个默认（部分唯一索引为最后防线）。
+- `POST /end`：`{ endedOn? }`，缺省为服务器 UTC 日期（Web 端发送用户本地日期）；须为真实日期，不早于 `startedOn`（同日结束允许；`startedOn` 为空时不比较），不晚于服务器 UTC 日期的次日（时区），否则 400 `VALIDATION`，不写入任何数据。这两条日期检查只在 API 中（数据库只有 `CHECK(ended_on IS NULL OR status = 'ended')`）。状态 → `ended`，记录 `ended_on`，清除默认。审计与更新都以"尚未结束"为条件：重复或并发结束只有一次生效（其余 409 `LINK_STATE`），只有一条审计。
+- `DELETE` → 200 `{ ok: true }`，任何状态均可删除（仅用于纠正误录，不保留历史），不影响卡、账户与币种；不存在、属于他人或已被删除 → 404。
+- 原子性与并发：创建（关联 → 可选的"清除旧默认 + 设置新默认" → 审计）、设默认（清除 + 设置）、结束（审计 + 更新）、删除（审计 + 删除）各为一个 `db.batch()`（libSQL 与 D1 上均为单个事务；D1 不支持交互式事务）。每条规则只在写入语句自身中执行一次——复合外键（归属）、未结束关联唯一索引（重复）、`INSERT … SELECT` 自该账户的 active 币种（币种范围）、`UPDATE … WHERE` 关联状态与用途（生命周期、默认）——没有可被并发请求绕过的预检查；写入被拒绝或未生效时，路由重新读取以给出原因（404 / 400 / 409）。在 libSQL 与本地 D1 上逐一注入失败（关联写入、审计写入、设置新默认、结束更新、删除）验证整体回滚、旧默认保留。
+- 审计：`card_link.create`、`card_link.end`、`card_link.delete`，`detail = { id, cardId, accountId }`（只有 id），以 `INSERT INTO audit_log … SELECT … FROM account_card_links …` 写在同一 batch 中，条件与变更相同：审计存在当且仅当该变更已提交。设默认、暂停 / 恢复、修改用途或备注不记审计（§3.7 未列出）。
+- 敏感扫描字段：`notes`（`details.fields`，不回显文本）。
+- 状态与删除：账户、账户币种、银行卡的冻结 / 关闭不修改关联（状态、默认标记不变，详情中照常可见），只是不再被推荐，恢复后重新可被推荐；删除卡或账户级联删除其关联；被关联（含已结束的）引用的账户币种不能移除（409 `CURRENCY_IN_USE`），只能关闭；归档机构不影响关联。
+
 ### 3.6 支付渠道
 
 | 方法 | 路径 | 说明 |
@@ -297,7 +320,7 @@ M3 新建流水时：`exact_currency` 预填资金账户与扣款币种（扣款
 
 ### 3.7 审计
 
-M2 记录以下审计动作（detail 只含 id 与后四位；`preferences.home_region` 只含修改前后的两个地区代码与是否首次创建 `{ from, to, created }`）：`institution.delete`、`account.delete`、`card.create`、`card.delete`、`card_link.create`、`card_link.end`、`card_link.delete`、`channel.delete`、`preferences.home_region`。
+M2 记录以下审计动作（detail 只含 id 与后四位——`card_link.*` 为 `{ id, cardId, accountId }`；`preferences.home_region` 只含修改前后的两个地区代码与是否首次创建 `{ from, to, created }`）：`institution.delete`、`account.delete`、`card.create`、`card.delete`、`card_link.create`、`card_link.end`、`card_link.delete`、`channel.delete`、`preferences.home_region`。
 
 审计记录的保留与内容限制见 DATA_MODEL §6.1：删除用户不删除其审计记录，记录中不得出现任何凭证。
 

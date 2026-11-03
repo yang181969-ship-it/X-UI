@@ -30,6 +30,22 @@ export async function body<S extends z.ZodType>(c: Context, schema: S): Promise<
   return r.data;
 }
 
+/** Like body(), for routes whose body is optional: an empty body is parsed as {}. */
+export async function optionalBody<S extends z.ZodType>(c: Context, schema: S): Promise<z.infer<S>> {
+  const text = await c.req.text();
+  let raw: unknown = {};
+  if (text.trim()) {
+    try {
+      raw = JSON.parse(text);
+    } catch {
+      fail(400, 'invalid JSON body', 'BAD_JSON');
+    }
+  }
+  const r = schema.safeParse(raw);
+  if (!r.success) fail(400, 'validation failed', 'VALIDATION', r.error.issues);
+  return r.data;
+}
+
 export function query<S extends z.ZodType>(c: Context, schema: S): z.infer<S> {
   const r = schema.safeParse(c.req.query());
   if (!r.success) fail(400, 'invalid query', 'VALIDATION', r.error.issues);

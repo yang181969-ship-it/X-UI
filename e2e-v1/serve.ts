@@ -1,7 +1,7 @@
 /**
  * Starts the X-UI v1 production build (apps/ledger-web/dist served by apps/ledger-api) against a
  * throwaway database in data/e2e-v1/, so browser runs never touch data/x-ui-v1.db or the legacy
- * app. Seeds five users and a few fictional rows (the accounts, settings and cards journeys have their own users).
+ * app. Seeds six users and a few fictional rows (the accounts, settings, cards and card-links journeys have their own users).
  */
 import { mkdirSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -21,6 +21,9 @@ import {
   CARDS_TOTP_SECRET,
   CARDS_USER,
   E2E_V1_PORT,
+  LINKS_SEED,
+  LINKS_TOTP_SECRET,
+  LINKS_USER,
   OTHER,
   OTHER_TOTP_SECRET,
   OWNER,
@@ -155,6 +158,26 @@ await db.insert(paymentChannelSources).values([
   { id: newId(now), userId: cardsUser.id, channelId: cWallet, cardId: linkedCard.id, status: 'active', createdAt: now, updatedAt: now },
   { id: newId(now), userId: cardsUser.id, channelId: cWallet, cardId: linkedCard.id, status: 'ended', createdAt: now, updatedAt: now },
 ]);
+// The card-links journey's own user and rows (fictional); the links themselves are made in the UI.
+const linksUser = await activate(LINKS_USER, LINKS_TOTP_SECRET);
+const [lEmi, lMulti, lUsd] = [newId(now), newId(now), newId(now)];
+await db.insert(institutions).values({ id: lEmi, userId: linksUser.id, name: LINKS_SEED.emi, nameKey: LINKS_SEED.emi, country: 'BE', institutionType: 'emi', color: '#9fe870', createdAt: now, updatedAt: now });
+await db.insert(accounts).values([
+  { id: lMulti, userId: linksUser.id, institutionId: lEmi, name: LINKS_SEED.multi, nameKey: LINKS_SEED.multi, accountType: 'e_money', accountCountry: 'BE', sort: 1, createdAt: now, updatedAt: now },
+  { id: lUsd, userId: linksUser.id, institutionId: lEmi, name: LINKS_SEED.usd, nameKey: LINKS_SEED.usd, accountType: 'bank', accountCountry: 'SG', sort: 2, createdAt: now, updatedAt: now },
+]);
+await db.insert(accountCurrencies).values([
+  { accountId: lMulti, userId: linksUser.id, currency: 'HKD', isDefault: true, sort: 0, createdAt: now },
+  { accountId: lMulti, userId: linksUser.id, currency: 'EUR', sort: 1, createdAt: now },
+  { accountId: lUsd, userId: linksUser.id, currency: 'USD', isDefault: true, sort: 0, createdAt: now },
+]);
+await db.insert(cards).values([
+  { id: newId(now), userId: linksUser.id, issuerInstitutionId: lEmi, name: LINKS_SEED.card, network: 'visa', cardType: 'debit', last4: LINKS_SEED.cardLast4, issuingCountry: 'BE', sort: 1, createdAt: now, updatedAt: now },
+  { id: newId(now), userId: linksUser.id, issuerInstitutionId: lEmi, name: LINKS_SEED.virtualCard, network: 'visa', cardType: 'debit', form: 'virtual', last4: LINKS_SEED.virtualLast4, issuingCountry: 'BE', sort: 2, createdAt: now, updatedAt: now },
+]);
+// Another user's account (must never be offered in the link dialog).
+await db.insert(accounts).values({ id: 'e2e-other-user-account', userId: other.id, institutionId: otherBank, name: LINKS_SEED.otherUsersAccount, nameKey: LINKS_SEED.otherUsersAccount.toLowerCase(), accountType: 'bank', accountCountry: 'HK', createdAt: now, updatedAt: now });
+await db.insert(accountCurrencies).values({ accountId: 'e2e-other-user-account', userId: other.id, currency: 'USD', isDefault: true, createdAt: now });
 client.close();
 
 await main();

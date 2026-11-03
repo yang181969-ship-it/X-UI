@@ -1,6 +1,6 @@
 # X-UI Product v1 — 数据模型（DATA_MODEL）
 
-> 状态：M1 表已实现；**M2 表已由迁移 `0001_m2_accounts` 实现（M2-B1，含 B1 加固：`user_preferences`、审计保留策略、`expires_on`、余额账户触发器）**；M2 API：机构（M2-B2.1）、账户及其币种（M2-B2.2）与个人设置 `home_region`（M2-B2.3）、银行卡（M2-B3，复用 `cards` 表，无数据库变更）已实现，其余尚未实现。
+> 状态：M1 表已实现；**M2 表已由迁移 `0001_m2_accounts` 实现（M2-B1，含 B1 加固：`user_preferences`、审计保留策略、`expires_on`、余额账户触发器）**；M2 API：机构（M2-B2.1）、账户及其币种（M2-B2.2）与个人设置 `home_region`（M2-B2.3）、银行卡（M2-B3，复用 `cards` 表，无数据库变更）、银行卡-账户关联与默认消费来源推荐（M2-B4，复用 `account_card_links` 表，无数据库变更）已实现，支付渠道尚未实现。
 > 相关文档：[PRODUCT_SPEC.md](PRODUCT_SPEC.md) · [API_SPEC.md](API_SPEC.md) · [TEST_PLAN.md](TEST_PLAN.md)
 
 ## 1. 通用约定
@@ -162,6 +162,8 @@ API 保证：每个账户至少一个币种，恰好一个默认币种（且为 
 
 生命周期：创建 → `active` ⇄ `suspended` → `ended`（"解除关联"，保留历史，不可恢复，需重新建立）。`DELETE` 仅用于纠正误录。账户、银行卡状态变化**不修改**关联的状态或默认标记；默认来源查找在读取时过滤状态（§5）。
 
+M2-B4 实现说明（无数据库变更）：`card_id`、`account_id`、`currency` 建立后不再修改（API 不提供）；已结束的关联只能修改 `notes`。`account_card_links_open_uq` 与 `account_card_links_default_uq` 不含 `user_id`（`card_id` 全局唯一，已足够），因此 API 在报告 `DUPLICATE` 之前先确认卡与账户属于当前用户，另一用户的相同关联不会以 409 暴露。默认关系的唯一性由服务端（batch：先清除同范围旧默认、再设置，两步都以目标仍为 active 的 `spending_source` 为条件）与部分唯一索引共同维护；`is_default` 的 CHECK 保证只有 active 的 `spending_source` 能是默认，暂停、结束或改用途时服务端同时清零。细节见 API_SPEC §3.5 实现说明。
+
 ### 3.6 `payment_channels` 支付渠道
 
 | 字段 | 类型 | 空 | 默认 | 约束 / 说明 |
@@ -291,6 +293,7 @@ rank := is_default DESC,
 - **币种一致优先于默认标记。** 任何合格的币种一致来源，都优先于需要换汇的默认来源。理由是多币种卡（如 Wise）通常优先扣同币种余额。这只是推荐，用户可以改。
 - 冻结或关闭的银行卡、账户，已关闭的账户币种，以及暂停或已结束的关联，永远不会被推荐。被跳过的默认关联不报错，继续按顺序查找。
 - 推荐结果不写入任何数据；M3 流水保存用户最终确认的值（§8）。
+- M2-B4 实现（`apps/ledger-api/src/services/cardLinks.ts` 的 `recommendSpendingSource`，纯函数）：`rank` 末尾另加 `id ASC`，使同一毫秒创建的关联也有确定顺序；到期（`expires_on`）不影响推荐，只看 `status`；响应另带 `considered`（每条未结束关联的合格性、可用币种与不合格原因，按决策顺序），见 API_SPEC §3.4.1 实现说明。
 
 示例（Wise 多币种账户 + Wise 借记卡，一条"所有币种"默认关联）：
 

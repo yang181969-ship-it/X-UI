@@ -23,7 +23,7 @@ import { audit } from '../lib/audit.ts';
 import { isForeignKeyViolation, isTriggerAbort, likeContains, rejectSensitive } from '../lib/guards.ts';
 import { body, fail, notFound, query } from '../lib/http.ts';
 import { newId } from '../lib/id.ts';
-import { accountSummary, cardSummary, channelSummary, institutionSummary, toLinkDto } from './summaries.ts';
+import { cardSummary, channelSummary, institutionSummary, selectLinkDtos, toLinkDto } from './summaries.ts';
 import { accountCreateBatch, accountPatchValues, currencyReplacePlan, currencyRows, type AccountRow as NewAccountRow } from '../services/accounts.ts';
 
 /**
@@ -249,11 +249,7 @@ export const accountRoutes = new Hono<AppBindings>()
     const { db } = c.var.deps;
     const uid = c.var.user.id;
     const [links, balanceOf, sourceOf] = await Promise.all([
-      db
-        .select({ link: accountCardLinks, card: cardSummary, account: accountSummary })
-        .from(accountCardLinks)
-        .innerJoin(cards, and(eq(cards.id, accountCardLinks.cardId), eq(cards.userId, accountCardLinks.userId)))
-        .innerJoin(accounts, and(eq(accounts.id, accountCardLinks.accountId), eq(accounts.userId, accountCardLinks.userId)))
+      selectLinkDtos(db)
         .where(and(eq(accountCardLinks.userId, uid), eq(accountCardLinks.accountId, id)))
         .orderBy(asc(accountCardLinks.createdAt), asc(accountCardLinks.id)),
       balanceChannels(c, id),

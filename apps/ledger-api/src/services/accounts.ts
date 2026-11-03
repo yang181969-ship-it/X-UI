@@ -57,16 +57,20 @@ export function accountCreateBatch(db: DB, account: AccountRow, currencies: Curr
  * Built with the query builder, not db.run(sql``): drizzle's D1 batch can't bind raw SQL.
  */
 export function insertIfInstitutionActive<T extends typeof accounts | typeof cards>(db: DB, table: T, row: Required<T['$inferInsert']>, institutionId: string) {
-  const values = Object.fromEntries(
-    Object.entries(getTableColumns(table)).map(([key, column]) => {
-      const value = (row as Record<string, unknown>)[key];
-      if (value === undefined) throw new Error(`insertIfInstitutionActive: no value for ${column.name}`);
-      return [key, sql`${value}`.as(column.name)];
-    }),
-  ) as Record<string, SQL.Aliased>;
   const activeInstitution = and(eq(institutions.id, institutionId), eq(institutions.userId, row.userId), eq(institutions.status, 'active'));
   // The generic table type is too wide for drizzle's select-shape check; the values are built from its own columns.
-  return db.insert(table as typeof accounts).select(db.select(values).from(institutions).where(activeInstitution) as never);
+  return db.insert(table as typeof accounts).select(db.select(rowAsSelect(table, row)).from(institutions).where(activeInstitution) as never);
+}
+
+/** Every column of `row` as a bound value aliased to its column name: the select list of an INSERT … SELECT. */
+export function rowAsSelect(table: Parameters<typeof getTableColumns>[0], row: Record<string, unknown>): Record<string, SQL.Aliased> {
+  return Object.fromEntries(
+    Object.entries(getTableColumns(table)).map(([key, column]) => {
+      const value = row[key];
+      if (value === undefined) throw new Error(`rowAsSelect: no value for ${column.name}`);
+      return [key, sql`${value}`.as(column.name)];
+    }),
+  );
 }
 
 export interface CurrencyReplacePlan {

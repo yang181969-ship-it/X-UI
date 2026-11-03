@@ -6,6 +6,7 @@ import {
   epochDay,
   ledgerErrorCode,
   normalizeNameKey,
+  spendingSourceQuerySchema,
   utcDate,
   type AccountSummary,
   type CardCreateResult,
@@ -13,19 +14,21 @@ import {
   type CardDto,
   type CardListItem,
   type InstitutionSummary,
+  type SpendingSourceResult,
 } from '@xui/ledger-shared';
-import { and, asc, eq, ne, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, inArray, ne, sql, type SQL } from 'drizzle-orm';
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
-import { accountCardLinks, accounts, cards, institutions, paymentChannels, paymentChannelSources } from '../db/schema.ts';
+import { accountCardLinks, accountCurrencies, accounts, cards, institutions, paymentChannels, paymentChannelSources } from '../db/schema.ts';
 import type { AppBindings } from '../env.ts';
 import { isForeignKeyViolation, rejectSensitive } from '../lib/guards.ts';
 import { body, fail, notFound, query } from '../lib/http.ts';
 import { newId } from '../lib/id.ts';
 import type { AccountRow } from '../services/accounts.ts';
+import { recommendSpendingSource, type SourceInput } from '../services/cardLinks.ts';
 import { cardAuditStatement, cardCreateBatch, cardPatchValues, cardSearchText, type CardRow, type StoredValueRows } from '../services/cards.ts';
 import { accountDto } from './accounts.ts';
-import { accountSummary, cardSummary, channelSummary, institutionSummary, toLinkDto } from './summaries.ts';
+import { accountSummary, channelSummary, institutionSummary, selectLinkDtos, toLinkDto } from './summaries.ts';
 
 /**
  * Debit and prepaid cards (API_SPEC §3.4). Every query is scoped to the signed-in user; another
@@ -42,6 +45,9 @@ import { accountSummary, cardSummary, channelSummary, institutionSummary, toLink
  *   (correcting a wrong pick) needs an active one too.
  * - Expiry (expires_on, YYYY-MM) is derived on read (expiry.ts) and never changes the status:
  *   expired is not closed, and freezing / closing is the user's choice.
+ * - GET /:id/spending-source recommends a funding account for a purchase currency
+ *   (recommendSpendingSource, DATA_MODEL §5): read-only, a candidate only — never a payment,
+ *   conversion or rate. Links themselves are managed by /card-links (cardLinks.ts).
  * - DELETE is for correcting mistakes: it removes the card's links (history included) and channel
  *   sources with it, never the accounts. From M3, a card used by a transaction can't be deleted.
  */
@@ -244,12 +250,7 @@ export const cardRoutes = new Hono<AppBindings>()
     const result: CardCreateResult = { card: toDto(written!.row, written!.issuer) };
     if (storedValue) {
       result.account = await accountDto(c, storedValue.account.id);
-      const [link] = await db
-        .select({ link: accountCardLinks, card: cardSummary, account: accountSummary })
-        .from(accountCardLinks)
-        .innerJoin(cards, and(eq(cards.id, accountCardLinks.cardId), eq(cards.userId, accountCardLinks.userId)))
-        .innerJoin(accounts, and(eq(accounts.id, accountCardLinks.accountId), eq(accounts.userId, accountCardLinks.userId)))
-        .where(and(eq(accountCardLinks.userId, uid), eq(accountCardLinks.id, storedValue.link.id)));
+      const [link] = await selectLinkDtos(db).where(and(eq(accountCardLinks.userId, uid), eq(accountCardLinks.id, storedValue.link.id)));
       result.link = toLinkDto(link!);
     }
     return c.json(result, 201);
@@ -261,11 +262,7 @@ export const cardRoutes = new Hono<AppBindings>()
     const { db } = c.var.deps;
     const uid = c.var.user.id;
     const [links, channels, sources] = await Promise.all([
-      db
-        .select({ link: accountCardLinks, card: cardSummary, account: accountSummary })
-        .from(accountCardLinks)
-        .innerJoin(cards, and(eq(cards.id, accountCardLinks.cardId), eq(cards.userId, accountCardLinks.userId)))
-        .innerJoin(accounts, and(eq(accounts.id, accountCardLinks.accountId), eq(accounts.userId, accountCardLinks.userId)))
+      selectLinkDtos(db)
         .where(and(eq(accountCardLinks.userId, uid), eq(accountCardLinks.cardId, id)))
         .orderBy(asc(accountCardLinks.createdAt), asc(accountCardLinks.id)),
       // Channels listing the card as an active funding source.
@@ -285,6 +282,39 @@ export const cardRoutes = new Hono<AppBindings>()
     const count = (status: string) => Number(sources.find((r) => r.status === status)?.n ?? 0);
     const detail: CardDetail = { ...dto, links: links.map(toLinkDto), channels, channelSourceCounts: { active: count('active'), ended: count('ended') } };
     return c.json(detail);
+  })
+
+  // Default spending-source recommendation (API_SPEC §3.4.1, DATA_MODEL §5): read-only, writes nothing.
+  .get('/:id/spending-source', async (c) => {
+    const { currency } = query(c, spendingSourceQuerySchema);
+    const id = c.req.param('id');
+    const uid = c.var.user.id;
+    const { db } = c.var.deps;
+    const ownLinks = and(eq(accountCardLinks.userId, uid), eq(accountCardLinks.cardId, id), ne(accountCardLinks.status, 'ended'));
+    const linkedAccountIds = db.select({ id: accountCardLinks.accountId }).from(accountCardLinks).where(ownLinks);
+    // One batch, so the card, its links, their accounts and currencies are read from one snapshot.
+    // No joins inside it: drizzle's D1 batch maps rows by column name, and joined id / status columns would collide.
+    const [card, links, linkedAccounts, currencies] = await db.batch([
+      db.select({ status: cards.status }).from(cards).where(ownCard(c, id)),
+      db.select().from(accountCardLinks).where(ownLinks),
+      db
+        .select(accountSummary)
+        .from(accounts)
+        .where(and(eq(accounts.userId, uid), inArray(accounts.id, linkedAccountIds))),
+      db
+        .select({ accountId: accountCurrencies.accountId, currency: accountCurrencies.currency, isDefault: accountCurrencies.isDefault, status: accountCurrencies.status, sort: accountCurrencies.sort })
+        .from(accountCurrencies)
+        .where(and(eq(accountCurrencies.userId, uid), inArray(accountCurrencies.accountId, linkedAccountIds))),
+    ]);
+    if (!card.length) notFound('card');
+    // Only the caller's own accounts are ever described. The composite foreign keys make a link to
+    // another user's account impossible; should such a row exist anyway, it is left out (never a 500).
+    const inputs: SourceInput[] = links.flatMap((link) => {
+      const account = linkedAccounts.find((a) => a.id === link.accountId);
+      return account ? [{ link, account, currencies: currencies.filter((cur) => cur.accountId === link.accountId) }] : [];
+    });
+    const result: SpendingSourceResult = recommendSpendingSource(card[0]!.status, currency, inputs);
+    return c.json(result);
   })
 
   .patch('/:id', async (c) => {

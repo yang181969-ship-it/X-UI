@@ -1748,3 +1748,41 @@ html[data-theme='light'] .login-blob {
 .delete-confirm-label .field-note {
   margin: 0;
 }
+/* Card ↔ account links (M2-B4): the same list on the card and the account page. */
+.link-row {
+  flex-wrap: wrap;
+}
+.link-row .row-main {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.link-row .link-actions {
+  flex: 0 1 auto;
+  justify-content: flex-end;
+}
+.link-history .field-note {
+  display: block;
+  margin-bottom: 4px;
+}
+.spending-preview-currency {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.spending-result .ant-alert {
+  margin-bottom: 12px;
+}
+.spending-candidates {
+  margin-top: 6px;
+}
+.spending-considered ol {
+  margin: 0;
+  padding-left: 20px;
+}
+.spending-candidate {
+  padding: 4px 0;
+}
+.spending-candidate.is-closed > a {
+  color: var(--ant-color-text-tertiary);
+}

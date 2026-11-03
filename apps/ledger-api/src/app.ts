@@ -6,6 +6,7 @@ import { csrfGuard, requireAuth } from './auth/middleware.ts';
 import type { AppBindings, Deps } from './env.ts';
 import { accountRoutes } from './routes/accounts.ts';
 import { authRoutes } from './routes/auth.ts';
+import { cardLinkRoutes } from './routes/cardLinks.ts';
 import { cardRoutes } from './routes/cards.ts';
 import { institutionRoutes } from './routes/institutions.ts';
 import { settingsRoutes } from './routes/settings.ts';
@@ -26,6 +27,7 @@ export const PROTECTED_MOUNTS = {
   '/institutions': institutionRoutes,
   '/accounts': accountRoutes,
   '/cards': cardRoutes,
+  '/card-links': cardLinkRoutes,
 } as const;
 
 export function createApp(deps: Deps, opts: AppOptions) {

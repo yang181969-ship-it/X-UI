@@ -22,6 +22,9 @@ export type AuditAction =
   | 'account.delete'
   | 'card.create'
   | 'card.delete'
+  | 'card_link.create'
+  | 'card_link.end'
+  | 'card_link.delete'
   | 'preferences.home_region';
 
 export async function audit(
