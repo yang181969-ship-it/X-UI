@@ -1,6 +1,6 @@
 # X-UI Product v1 — 数据模型（DATA_MODEL）
 
-> 状态：M1 表已实现；**M2 表已由迁移 `0001_m2_accounts` 实现（M2-B1，含 B1 加固：`user_preferences`、审计保留策略、`expires_on`、余额账户触发器）**；M2 API：机构（M2-B2.1）、账户及其币种（M2-B2.2）与个人设置 `home_region`（M2-B2.3）、银行卡（M2-B3，复用 `cards` 表，无数据库变更）、银行卡-账户关联与默认消费来源推荐（M2-B4，复用 `account_card_links` 表，无数据库变更）已实现，支付渠道尚未实现。
+> 状态：M1 表已实现；**M2 表已由迁移 `0001_m2_accounts` 实现（M2-B1，含 B1 加固：`user_preferences`、审计保留策略、`expires_on`、余额账户触发器）**；M2 API：机构（M2-B2.1）、账户及其币种（M2-B2.2）与个人设置 `home_region`（M2-B2.3）、银行卡（M2-B3，复用 `cards` 表，无数据库变更）、银行卡-账户关联与默认消费来源推荐（M2-B4，复用 `account_card_links` 表，无数据库变更）、支付渠道及其资金来源（M2-B5，复用 `payment_channels`、`payment_channel_sources` 表，无数据库变更）已实现。
 > 相关文档：[PRODUCT_SPEC.md](PRODUCT_SPEC.md) · [API_SPEC.md](API_SPEC.md) · [TEST_PLAN.md](TEST_PLAN.md)
 
 ## 1. 通用约定
@@ -208,6 +208,14 @@ M2-B4 实现说明（无数据库变更）：`card_id`、`account_id`、`currenc
 
 约束：`CHECK((card_id IS NULL) <> (account_id IS NULL))`；`UNIQUE(channel_id, card_id) WHERE card_id IS NOT NULL AND status = 'active'`；`UNIQUE(channel_id, account_id) WHERE account_id IS NOT NULL AND status = 'active'`；`UNIQUE(channel_id) WHERE is_default = 1`；`INDEX(user_id, channel_id)`。
 API 规则：`device_wallet` 的来源只能是银行卡。
+
+M2-B5 实现说明（§3.6、§3.7，无数据库变更）：
+- 支付渠道不是资产账户：没有余额或金额列，也不计算任何余额；资金始终在 `accounts` 中。渠道、余额账户（前端称"资金账户"）、来源（银行卡或账户）与转账方式（SWIFT、FPS、SEPA 等，M3）相互独立。
+- 余额账户：仅 `payment_service`（`CHECK`），类型 `e_money` / `stored_value`（三个触发器），一个账户至多被一个渠道使用（`payment_channels_balance_account_uq`）。该唯一索引不含 `user_id`（`balance_account_id` 全局唯一已足够，复合外键保证同一用户），因此 API 在报告 `DUPLICATE` 之前先确认账户属于当前用户，另一用户的账户（即使正被其渠道使用）与不存在的账户同样返回 404。
+- 来源：`device_wallet` 只能挂银行卡由 API 在写入语句中保证（`INSERT … SELECT … FROM payment_channels WHERE channel_type <> 'device_wallet'`），渠道改为设备钱包时同样在 `UPDATE … WHERE NOT EXISTS (账户来源)` 中检查（已结束的账户来源同样阻止：历史保持原有含义，提示新建设备钱包渠道并归档旧渠道，不要求删除历史），二者在 SQLite / D1 的串行写入下互斥。来源的 `channel_id`、`card_id`、`account_id` 建立后不再修改（API 不提供）。
+- 生命周期：来源 `active` → `ended`（结束，保留历史，清除默认，不可恢复——规格未定义恢复；需要时作为新记录重新添加，部分唯一索引只约束 `active` 记录）；`DELETE` 仅用于纠正误录。渠道 `active` ⇄ `archived`，归档不修改任何来源。银行卡、账户的冻结 / 关闭不修改来源；删除银行卡或账户级联删除其来源（§4），被用作余额账户的账户不能删除；删除渠道级联删除其全部来源，不影响银行卡、账户与余额账户。
+- 默认来源：每个渠道至多一个（`payment_channel_sources_default_uq` 为最后防线）。设默认是一个 batch：先清除同渠道的旧默认、再设置新默认，两条语句都以目标仍为 `active` 为条件；任一失败整体回滚，不会出现默认丢失或两个默认。
+- `payment_channels_balance_ck` 与 API 的合并检查共同保证"改类型时不能保留余额账户"；`payment_channel_sources_default_ck` 保证已结束的来源不能是默认。
 
 ## 4. 复合外键矩阵（数据隔离）
 

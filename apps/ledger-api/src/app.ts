@@ -8,6 +8,7 @@ import { accountRoutes } from './routes/accounts.ts';
 import { authRoutes } from './routes/auth.ts';
 import { cardLinkRoutes } from './routes/cardLinks.ts';
 import { cardRoutes } from './routes/cards.ts';
+import { channelRoutes, channelSourceRoutes } from './routes/channels.ts';
 import { institutionRoutes } from './routes/institutions.ts';
 import { settingsRoutes } from './routes/settings.ts';
 import { setupRoutes } from './routes/setup.ts';
@@ -28,6 +29,8 @@ export const PROTECTED_MOUNTS = {
   '/accounts': accountRoutes,
   '/cards': cardRoutes,
   '/card-links': cardLinkRoutes,
+  '/payment-channels': channelRoutes,
+  '/payment-channel-sources': channelSourceRoutes,
 } as const;
 
 export function createApp(deps: Deps, opts: AppOptions) {

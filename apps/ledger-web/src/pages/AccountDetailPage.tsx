@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate, useParams } from 'react-router';
 import { useAccount } from '../api/accounts.ts';
+import { channelHref } from '../api/channels.ts';
 import { CurrencyTags } from '../components/CurrencyTags.tsx';
 import { InstitutionAvatar } from '../components/InstitutionAvatar.tsx';
 import { PageTop } from '../layouts/PanelLayout.tsx';
@@ -15,6 +16,7 @@ import { AccountFormModal } from './accounts/AccountFormModal.tsx';
 import { AccountStatusTag, accountSubtitle } from './accounts/AccountsTab.tsx';
 import { CurrencyModal } from './accounts/CurrencyModal.tsx';
 import { useAccountActions } from './accounts/useAccountActions.ts';
+import { ChannelTypeTag } from './channels/ChannelsTab.tsx';
 import { CardLinksPanel } from './links/CardLinks.tsx';
 
 /**
@@ -202,11 +204,16 @@ function ChannelList({ title, items }: { title: string; items: ChannelSummary[] 
         <Typography.Text type="secondary">{t('accounts.none')}</Typography.Text>
       ) : (
         items.map((c) => (
-          <div key={c.id} className="row-item">
+          <div key={c.id} className="row-item" data-channel={c.id}>
             <div className="row-main">
-              <div className="row-title">{c.name}</div>
+              <div className="row-title">
+                <Link to={channelHref(c.id)}>{c.name}</Link>
+              </div>
             </div>
-            {c.status !== 'active' && <Tag>{t('institutions.statuses.archived')}</Tag>}
+            <Space size={4}>
+              <ChannelTypeTag type={c.channelType} />
+              {c.status !== 'active' && <Tag>{t('channels.statuses.archived')}</Tag>}
+            </Space>
           </div>
         ))
       )}

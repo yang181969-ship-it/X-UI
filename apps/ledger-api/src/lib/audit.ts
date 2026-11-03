@@ -25,6 +25,7 @@ export type AuditAction =
   | 'card_link.create'
   | 'card_link.end'
   | 'card_link.delete'
+  | 'channel.delete'
   | 'preferences.home_region';
 
 export async function audit(

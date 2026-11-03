@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate, useParams } from 'react-router';
 import { useCard } from '../api/cards.ts';
+import { channelHref } from '../api/channels.ts';
 import { useInstitution } from '../api/institutions.ts';
 import { CardFace } from '../components/CardFace.tsx';
 import { ExpiryTag, useToday } from '../components/ExpiryTag.tsx';
@@ -14,6 +15,7 @@ import { PageTop } from '../layouts/PanelLayout.tsx';
 import { regionName } from '../lib/regions.ts';
 import { CardFormModal } from './cards/CardFormModal.tsx';
 import { useCardActions } from './cards/useCardActions.tsx';
+import { ChannelTypeTag } from './channels/ChannelsTab.tsx';
 import { CardLinksPanel } from './links/CardLinks.tsx';
 import { SpendingSourcePreview } from './links/SpendingSourcePreview.tsx';
 import { CardStatusTag, cardSubtitle } from './CardsPage.tsx';
@@ -96,11 +98,16 @@ export function CardDetailPage() {
               <Typography.Text type="secondary">{t('cards.channelsEmpty')}</Typography.Text>
             ) : (
               card.channels.map((c) => (
-                <div key={c.id} className="row-item">
+                <div key={c.id} className="row-item" data-channel={c.id}>
                   <div className="row-main">
-                    <div className="row-title">{c.name}</div>
+                    <div className="row-title">
+                      <Link to={channelHref(c.id)}>{c.name}</Link>
+                    </div>
                   </div>
-                  {c.status !== 'active' && <Tag>{t('institutions.statuses.archived')}</Tag>}
+                  <Space size={4}>
+                    <ChannelTypeTag type={c.channelType} />
+                    {c.status !== 'active' && <Tag>{t('channels.statuses.archived')}</Tag>}
+                  </Space>
                 </div>
               ))
             )}

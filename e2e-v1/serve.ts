@@ -1,7 +1,7 @@
 /**
  * Starts the X-UI v1 production build (apps/ledger-web/dist served by apps/ledger-api) against a
  * throwaway database in data/e2e-v1/, so browser runs never touch data/x-ui-v1.db or the legacy
- * app. Seeds six users and a few fictional rows (the accounts, settings, cards and card-links journeys have their own users).
+ * app. Seeds seven users and a few fictional rows (the accounts, settings, cards, card-links and channels journeys have their own users).
  */
 import { mkdirSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -20,6 +20,9 @@ import {
   CARDS_SEED,
   CARDS_TOTP_SECRET,
   CARDS_USER,
+  CHANNELS_SEED,
+  CHANNELS_TOTP_SECRET,
+  CHANNELS_USER,
   E2E_V1_PORT,
   LINKS_SEED,
   LINKS_TOTP_SECRET,
@@ -178,6 +181,32 @@ await db.insert(cards).values([
 // Another user's account (must never be offered in the link dialog).
 await db.insert(accounts).values({ id: 'e2e-other-user-account', userId: other.id, institutionId: otherBank, name: LINKS_SEED.otherUsersAccount, nameKey: LINKS_SEED.otherUsersAccount.toLowerCase(), accountType: 'bank', accountCountry: 'HK', createdAt: now, updatedAt: now });
 await db.insert(accountCurrencies).values({ accountId: 'e2e-other-user-account', userId: other.id, currency: 'USD', isDefault: true, createdAt: now });
+
+// The payment-channels journey's own user and rows (fictional); its new channels and sources are made in the UI.
+const chUser = await activate(CHANNELS_USER, CHANNELS_TOTP_SECRET);
+const [chProvider, chArchived, chBank, chFunds, chTaken, chSavings] = [newId(now), newId(now), newId(now), newId(now), newId(now), newId(now)];
+await db.insert(institutions).values([
+  { id: chProvider, userId: chUser.id, name: CHANNELS_SEED.provider, nameKey: CHANNELS_SEED.provider, country: 'LU', institutionType: 'emi', color: '#1677ff', createdAt: now, updatedAt: now },
+  { id: chArchived, userId: chUser.id, name: CHANNELS_SEED.archivedProvider, nameKey: CHANNELS_SEED.archivedProvider, country: 'GB', institutionType: 'emi', status: 'archived', createdAt: now, updatedAt: now },
+  { id: chBank, userId: chUser.id, name: CHANNELS_SEED.bank, nameKey: CHANNELS_SEED.bank, country: 'SG', institutionType: 'bank', createdAt: now, updatedAt: now },
+]);
+await db.insert(accounts).values([
+  { id: chFunds, userId: chUser.id, institutionId: chProvider, name: CHANNELS_SEED.funds, nameKey: CHANNELS_SEED.funds, accountType: 'e_money', accountCountry: 'LU', sort: 1, createdAt: now, updatedAt: now },
+  { id: chTaken, userId: chUser.id, institutionId: chProvider, name: CHANNELS_SEED.takenFunds, nameKey: CHANNELS_SEED.takenFunds, accountType: 'e_money', accountCountry: 'LU', sort: 2, createdAt: now, updatedAt: now },
+  { id: chSavings, userId: chUser.id, institutionId: chBank, name: CHANNELS_SEED.bankAccount, nameKey: CHANNELS_SEED.bankAccount, accountType: 'bank', accountCountry: 'SG', sort: 3, createdAt: now, updatedAt: now },
+]);
+await db.insert(accountCurrencies).values([
+  { accountId: chFunds, userId: chUser.id, currency: 'EUR', isDefault: true, createdAt: now },
+  { accountId: chTaken, userId: chUser.id, currency: 'EUR', isDefault: true, createdAt: now },
+  { accountId: chSavings, userId: chUser.id, currency: 'SGD', isDefault: true, createdAt: now },
+]);
+await db.insert(cards).values([
+  { id: newId(now), userId: chUser.id, issuerInstitutionId: chBank, name: CHANNELS_SEED.card, network: 'visa', cardType: 'debit', last4: CHANNELS_SEED.cardLast4, issuingCountry: 'SG', sort: 1, createdAt: now, updatedAt: now },
+  { id: newId(now), userId: chUser.id, issuerInstitutionId: chBank, name: CHANNELS_SEED.virtualCard, network: 'mastercard', cardType: 'debit', form: 'virtual', last4: CHANNELS_SEED.virtualLast4, issuingCountry: 'SG', sort: 2, createdAt: now, updatedAt: now },
+]);
+await db.insert(paymentChannels).values({ id: newId(now), userId: chUser.id, name: CHANNELS_SEED.oldChannel, nameKey: CHANNELS_SEED.oldChannel, channelType: 'payment_service', balanceAccountId: chTaken, sort: 9, createdAt: now, updatedAt: now });
+// Another user's channel (fixed id): the journey tries to open it.
+await db.insert(paymentChannels).values({ id: CHANNELS_SEED.otherUsersChannelId, userId: other.id, name: CHANNELS_SEED.otherUsersChannel, nameKey: CHANNELS_SEED.otherUsersChannel.toLowerCase(), channelType: 'device_wallet', createdAt: now, updatedAt: now });
 client.close();
 
 await main();

@@ -86,7 +86,7 @@ export type CardPatchColumns = Partial<
   Pick<typeof cards.$inferInsert, 'issuerInstitutionId' | 'name' | 'network' | 'cardType' | 'form' | 'last4' | 'issuingCountry' | 'expiresOn' | 'status' | 'notes' | 'sort'>
 > & { updatedAt: number };
 
-export type CardPatchResult = { ok: true; patch: CardUpdate; values: CardPatchColumns } | { ok: false; code: 'VALIDATION' | 'CARD_TYPE_UNSUPPORTED'; issues: z.core.$ZodIssue[] };
+export type CardPatchResult = { ok: true; patch: CardUpdate; values: CardPatchColumns } | { ok: false; code: ReturnType<typeof ledgerErrorCode>; issues: z.core.$ZodIssue[] };
 
 /**
  * Validate a PATCH /cards/:id body and turn it into the update. Unknown fields (userId, id,

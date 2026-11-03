@@ -3,7 +3,7 @@ import { and, eq, getTableColumns, inArray, sql, type SQL } from 'drizzle-orm';
 import type { BatchItem } from 'drizzle-orm/batch';
 import type { z } from 'zod';
 import type { DB } from '../db/client.ts';
-import { accountCurrencies, accounts, cards, institutions } from '../db/schema.ts';
+import { accountCurrencies, accounts, cards, institutions, paymentChannels } from '../db/schema.ts';
 
 /**
  * Account service rules. PATCH /accounts/:id goes through accountPatchValues, so the column set it
@@ -52,11 +52,12 @@ export function accountCreateBatch(db: DB, account: AccountRow, currencies: Curr
 /**
  * INSERT INTO <table> SELECT <row's values> FROM institutions WHERE (institutionId, row.userId,
  * active): writes the row while the institution is an active one of the same user, and nothing
- * (without an error) otherwise. Used for new accounts and new cards, which need an active
- * institution; the statement re-checks inside the batch what the route checked before it.
+ * (without an error) otherwise. Used for new accounts, new cards and new payment channels with a
+ * provider, which need an active institution; the statement re-checks inside the batch what the
+ * route checked before it (or, for channels, is the only check).
  * Built with the query builder, not db.run(sql``): drizzle's D1 batch can't bind raw SQL.
  */
-export function insertIfInstitutionActive<T extends typeof accounts | typeof cards>(db: DB, table: T, row: Required<T['$inferInsert']>, institutionId: string) {
+export function insertIfInstitutionActive<T extends typeof accounts | typeof cards | typeof paymentChannels>(db: DB, table: T, row: Required<T['$inferInsert']>, institutionId: string) {
   const activeInstitution = and(eq(institutions.id, institutionId), eq(institutions.userId, row.userId), eq(institutions.status, 'active'));
   // The generic table type is too wide for drizzle's select-shape check; the values are built from its own columns.
   return db.insert(table as typeof accounts).select(db.select(rowAsSelect(table, row)).from(institutions).where(activeInstitution) as never);

@@ -1786,3 +1786,19 @@ html[data-theme='light'] .login-blob {
 .spending-candidate.is-closed > a {
   color: var(--ant-color-text-tertiary);
 }
+/* Payment channels (M2-B5): list on 账户 → 支付渠道, detail page with its funding sources. */
+.channel-table .clickable-row {
+  cursor: pointer;
+}
+.channel-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.channel-detail .ref-section + .ref-section {
+  margin-top: 16px;
+}
+.source-history .field-note {
+  display: block;
+  margin-bottom: 4px;
+}

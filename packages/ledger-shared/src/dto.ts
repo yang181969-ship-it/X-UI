@@ -320,6 +320,17 @@ export interface LinkStateDetails {
   status: CardLinkStatus;
 }
 
+/**
+ * details of PATCH /payment-channels/:id → 400 CHANNEL_SOURCE_KIND when the channel would become a
+ * device wallet but has account sources (M2-B5). Ended ones count: they are kept history, never
+ * deleted to allow the change — a new device-wallet channel is created instead.
+ */
+export interface ChannelTypeChangeDetails {
+  accountSources: number;
+  activeAccountSources: number;
+  endedAccountSources: number;
+}
+
 /** details of a 409 DUPLICATE: the existing record (an institution, or the unfinished link with the same card, account, scope and role). */
 export interface DuplicateDetails {
   existingId: string;

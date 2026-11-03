@@ -22,6 +22,7 @@ import {
   ledgerErrorCode,
   normalizeNameKey,
   paymentChannelCreateSchema,
+  paymentChannelListQuerySchema,
   paymentChannelUpdateSchema,
   profileSettingsUpdateSchema,
   spendingSourceQuerySchema,
@@ -179,9 +180,14 @@ describe('links, channels, sources, settings', () => {
   it('channel types and balance accounts (P-1, P-2)', () => {
     ok(paymentChannelCreateSchema, { name: 'PayPal', channelType: 'payment_service', providerInstitutionId: 'i', balanceAccountId: 'a', region: 'LU', notes: null });
     ok(paymentChannelCreateSchema, { name: 'Apple Pay', channelType: 'device_wallet' });
-    bad(paymentChannelCreateSchema, { name: 'Wire', channelType: 'bank_transfer' });
-    bad(paymentChannelCreateSchema, { name: 'Apple Pay', channelType: 'device_wallet', balanceAccountId: 'a' });
-    bad(paymentChannelUpdateSchema, { channelType: 'other', balanceAccountId: 'a' });
+    expect(bad(paymentChannelCreateSchema, { name: 'Wire', channelType: 'bank_transfer' })).toBe('VALIDATION');
+    // A balance account on a channel that is not a payment_service (API_SPEC §1.1).
+    expect(bad(paymentChannelCreateSchema, { name: 'Apple Pay', channelType: 'device_wallet', balanceAccountId: 'a' })).toBe('BALANCE_ACCOUNT_KIND');
+    expect(bad(paymentChannelUpdateSchema, { channelType: 'other', balanceAccountId: 'a' })).toBe('BALANCE_ACCOUNT_KIND');
+    expect(bad(paymentChannelCreateSchema, { name: 'Apple Pay', channelType: 'device_wallet', balanceAccountId: 'a', pan: '1' })).toBe('BALANCE_ACCOUNT_KIND');
+    ok(paymentChannelListQuerySchema, { q: 'pay', type: 'device_wallet', status: 'all' });
+    expect(bad(paymentChannelListQuerySchema, { type: 'bank_transfer' })).toBe('VALIDATION');
+    expect(bad(paymentChannelListQuerySchema, { status: 'closed' })).toBe('VALIDATION');
   });
 
   it('a source is a card or an account, never both or neither (P-4)', () => {

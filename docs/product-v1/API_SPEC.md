@@ -1,6 +1,6 @@
 # X-UI Product v1 — API 规格（API_SPEC）
 
-> 状态：§2 为 M1 已实现接口；§3 起为 M2 设计（M2-A 修订版，含 M2-B1 加固）。**§3.2 金融机构已在 M2-B2.1 实现，§3.3 账户已在 M2-B2.2 实现，§3.1 个人设置已在 M2-B2.3 实现，§3.4 银行卡的 CRUD 已在 M2-B3 实现，§3.5 银行卡-账户关联与 §3.4.1 `spending-source` 推荐已在 M2-B4 实现**，§3.6 支付渠道尚未实现。
+> 状态：§2 为 M1 已实现接口；§3 起为 M2 设计（M2-A 修订版，含 M2-B1 加固）。**§3.2 金融机构已在 M2-B2.1 实现，§3.3 账户已在 M2-B2.2 实现，§3.1 个人设置已在 M2-B2.3 实现，§3.4 银行卡的 CRUD 已在 M2-B3 实现，§3.5 银行卡-账户关联与 §3.4.1 `spending-source` 推荐已在 M2-B4 实现，§3.6 支付渠道及其资金来源已在 M2-B5 实现**（M2 全部接口已实现）。
 > 相关文档：[PRODUCT_SPEC.md](PRODUCT_SPEC.md) · [DATA_MODEL.md](DATA_MODEL.md) · [TEST_PLAN.md](TEST_PLAN.md)
 
 ## 1. 通用约定
@@ -24,14 +24,14 @@
 | `SENSITIVE_DATA` | 400 | 自由文本中出现疑似完整卡号或 CVV/PIN（无绕过参数） |
 | `CARD_TYPE_UNSUPPORTED` | 400 | 卡片类型不是 `debit` / `prepaid`（如 `credit`） |
 | `CURRENCY_NOT_ON_ACCOUNT` | 400 | 关联指定的币种不属于该账户或已关闭 |
-| `CHANNEL_SOURCE_KIND` | 400 | 来源类型与渠道类型不符（设备钱包只能挂银行卡） |
+| `CHANNEL_SOURCE_KIND` | 400 | 来源类型与渠道类型不符（设备钱包只能挂银行卡；仍有账户来源（含已结束）的渠道不能改为设备钱包，`details = { accountSources, activeAccountSources, endedAccountSources }`，M2-B5） |
 | `BALANCE_ACCOUNT_KIND` | 400 | 余额账户只允许 `payment_service` 渠道，且账户类型须为 `e_money` 或 `stored_value` |
 | `NOT_FOUND` | 404 | 不存在或不属于当前用户 |
 | `DUPLICATE` | 409 | 重名机构 / 重复的有效关联 / 重名渠道 / 账户已是其他渠道的余额账户；`details.existingId` |
 | `IN_USE` | 409 | 被引用，不能删除；`details.references` 给出引用计数 |
 | `CURRENCY_IN_USE` | 409 | 币种被关联引用，不能移除（应改为关闭） |
-| `INSTITUTION_ARCHIVED` | 409 | 机构已归档，不能新建账户（先恢复机构）；`details.institutionId`（M2-B2.2 复审新增） |
-| `LINK_STATE` | 409 | 关联当前的状态不允许该操作：已结束的关联不能再改状态、用途、优先级或设为默认，暂停的关联不能设为默认；`details.status`（M2-B4 新增） |
+| `INSTITUTION_ARCHIVED` | 409 | 机构已归档，不能新建账户（先恢复机构）；`details.institutionId`（M2-B2.2 复审新增；M2-B3 起同样用于新银行卡的发卡机构，M2-B5 起用于新指定的支付渠道服务机构） |
+| `LINK_STATE` | 409 | 关联当前的状态不允许该操作：已结束的关联不能再改状态、用途、优先级或设为默认，暂停的关联不能设为默认；`details.status`（M2-B4 新增；M2-B5 起同样用于已结束的支付渠道来源：不能设为默认或再次结束） |
 
 ## 2. M1 已实现接口（不变）
 
@@ -318,9 +318,28 @@ M3 新建流水时：`exact_currency` 预填资金账户与扣款币种（扣款
 - `device_wallet` 的来源只能是银行卡（400 `CHANNEL_SOURCE_KIND`）。
 - 同一渠道同一来源的有效记录只能有一条（409 `DUPLICATE`）。
 
+实现说明（M2-B5）：
+- 已实现本节全部九个接口。未新增迁移，`0000`、`0001` 不变：复用 `payment_channels`、`payment_channel_sources` 两张表及其 CHECK（渠道类型、余额账户仅限 `payment_service`、来源 XOR、默认仅限 `active`）、部分唯一索引（余额账户唯一、每个来源一条有效记录、每个渠道一个默认来源）、`UNIQUE(user_id, name_key)`、三个 `BALANCE_ACCOUNT_KIND` 触发器与五条复合外键。`@xui/ledger-shared` 只新增了列表查询 schema（`paymentChannelListQuerySchema`、`CHANNEL_STATUS_FILTERS`），DTO 不变。
+- 列表直接返回数组，按 `sort`、`name_key` 排序；`status` 缺省返回未归档的渠道，`all` 返回全部；`type` 按渠道类型；`q` 按规范化值匹配渠道名称或服务机构名称（`%`、`_` 按字面）；查询参数严格校验（未知参数 → 400）。`sourceCount` 为**有效（`active`）**来源数；`provider`、`balanceAccount` 为摘要（未指定时为 `null`）。
+- `POST` → 201 + 渠道 DTO；`PATCH` 部分更新（空请求体、`id`、`userId`、`createdAt` 等未知字段 → 400）。名称按 `name_key` 在本人范围内唯一（含已归档的渠道）→ 409 `DUPLICATE`，`details.existingId` 为本人的那个渠道。
+- 余额账户：`balanceAccountId` 出现在非 `payment_service` 渠道上 → 400 `BALANCE_ACCOUNT_KIND`（§1.1；共享 schema 的规则以该错误码报告，`PATCH` 与已存值合并后再检查，改类型而不解除余额账户同样被拒绝；`CHECK` 为最后防线）；账户类型不是 `e_money` / `stored_value` → 400 `BALANCE_ACCOUNT_KIND`（触发器判定）；已是另一渠道的余额账户 → 409 `DUPLICATE`，`details.existingId` 为占用它的渠道；他人的或不存在的账户 → 404。`payment_channels_balance_account_uq` 不含 `user_id`：写入失败时**先确认所引用的账户与机构属于当前用户（否则 404），再报告重复**，另一用户正在使用的账户与不存在的账户返回完全相同的 404，不会以 409 暴露。余额账户的状态（冻结、关闭）不限制（规格未定义），摘要显示其状态。`balanceAccountId: null` 解除余额账户，之后该账户可被其他渠道使用或删除。
+- 服务机构（可选）：须为当前用户的机构（否则 404）；**新指定**（创建或更换）的机构须为有效机构，已归档 → 409 `INSTITUTION_ARCHIVED`（规格未定义，沿用账户与银行卡的做法）；保留原有的已归档机构不检查。创建以 `INSERT … SELECT … FROM institutions WHERE … status = 'active'` 写入，更换以 `UPDATE … WHERE EXISTS (… status = 'active')` 写入，检查之后被归档或删除的机构不会被写入（409 / 404，渠道不变）。
+- 改为 `device_wallet`：渠道仍有账户来源 → 400 `CHANNEL_SOURCE_KIND`，`details = { accountSources, activeAccountSources, endedAccountSources }`；条件写在 `UPDATE … WHERE NOT EXISTS (…)` 中，与并发添加账户来源互斥。**只有已结束的账户来源同样拒绝**：它们是该渠道的历史（曾由哪个账户出资），不能通过修改渠道类型改变其含义；错误信息与前端提示建议新建设备钱包渠道并归档此渠道，**从不建议删除历史来源**（删除仅用于纠正误录）。拒绝时渠道、来源与审计均不变。所有现存来源都是银行卡（含已结束的）时允许修改；改为 `payment_service` 或 `other` 不受账户来源影响。不新增类型快照或数据库结构。
+- 归档：只改变渠道状态并在默认列表中隐藏，**不修改、不删除任何来源**；已归档的渠道照常可查看、编辑、管理来源（规格未定义限制，未新增错误码）。
+- `GET /:id` 的 `sources` 含全部来源（`active` 与 `ended`），按 `created_at`、`id` 排序，每项带银行卡或账户摘要；前端分「当前来源」「历史来源」两节。只描述引用当前用户自己的银行卡或账户的来源（复合外键使其他情况无法写入；即使绕过外键存在这样的行也不返回）。
+- `DELETE /payment-channels/:id` → 200 `{ ok: true }`：一个 batch，审计 `channel.delete`（`detail = { id }`，以 `INSERT … SELECT … FROM payment_channels` 读取，只在渠道存在时写入）→ 删除（级联删除其全部来源，含已结束的）；银行卡、账户、余额账户与机构不受影响；不存在、属于他人或已被并发删除 → 404 且不写审计。删除被拒绝或审计写入失败则整体回滚。M3 起被流水引用 → 409 `IN_USE`。
+- `POST /payment-channels/:id/sources`：请求体 `{ cardId }` 或 `{ accountId }`（恰好一个，否则 400），可带 `isDefault`、`notes`；→ 201 + 来源 DTO（新来源恒为 `active`）。来源行以 `INSERT … SELECT … FROM payment_channels WHERE id、user_id 匹配[且（账户来源时）channel_type <> 'device_wallet']` 写入：渠道不存在、属于他人、或在检查之后被删除 → 404；渠道是（或刚被改为）设备钱包而来源是账户 → 400 `CHANNEL_SOURCE_KIND`。他人的或不存在的银行卡 / 账户（含检查后被删除）→ 复合外键拒绝 → 404。同一来源已有有效记录 → 409 `DUPLICATE`（`details.existingId`），同样先确认渠道、银行卡与账户的归属。已结束的来源可以重新添加（新记录，历史保留）。允许把冻结 / 关闭的银行卡或账户记录为来源（与 M2-B4 关联一致）。`isDefault: true` 时同一 batch 中先清除该渠道的旧默认、再设置新来源为默认。
+- `PATCH /payment-channel-sources/:id`：`{ isDefault?, notes? }`（空请求体与其他字段 → 400）。`isDefault: true`：一个 batch，先清除同渠道的旧默认、再设置本来源（并同时写入 `notes`），两条语句都以"本来源仍是该用户的 `active` 来源"为条件——来源在读取之后被结束或删除时两条都不生效，旧默认保留，返回 409 `LINK_STATE`（`details.status = "ended"`）/ 404。`isDefault: false` 清除默认标记（任何状态）。规格未定义"已结束"后的恢复，故不提供。已结束的来源只能改 `notes`（及 `isDefault: false`）。
+- `POST /payment-channel-sources/:id/end`：请求体为空或 `{}`（来源表没有结束日期列）。状态 → `ended`，同时清除默认；以"仍为 `active`"为条件，重复或并发结束只有一次生效，其余 409 `LINK_STATE`。结束后渠道可能没有默认来源（规格允许）。
+- `DELETE /payment-channel-sources/:id` → 200 `{ ok: true }`，任何状态均可删除（仅用于纠正误录），不影响银行卡与账户；不存在、属于他人或已删除 → 404。
+- 审计：只记 `channel.delete`（§3.7）；来源的添加、默认切换、结束、删除与渠道的创建、修改、归档不记审计（§3.7 未列出）。
+- 原子性与并发：所有多语句写入（来源创建 + 设默认、设默认的清除 + 设置、渠道删除的审计 + 删除）各为一个 `db.batch()`（libSQL 与 D1 上均为单个事务），单语句写入也经 batch 执行；每条规则只在写入语句自身中执行（复合外键、触发器、唯一索引、CHECK、`INSERT … SELECT`、`UPDATE … WHERE`），写入未生效或被拒绝时路由重新读取以给出原因。在 libSQL 与本地 D1 上逐一注入失败（来源写入、设置新默认、结束、删除、审计写入、渠道删除、级联删除来源）验证整体回滚、旧默认保留。
+- 敏感扫描字段：渠道的 `name`、`notes`，来源的 `notes`（`details.fields`，不回显文本）。
+- 历史：来源只描述渠道背后的银行卡或账户，不是扣款记录；M3 流水保存当时实际使用的银行卡、渠道与资金账户，不依据当前来源或默认标记重新解释（DATA_MODEL §8.3）。
+
 ### 3.7 审计
 
-M2 记录以下审计动作（detail 只含 id 与后四位——`card_link.*` 为 `{ id, cardId, accountId }`；`preferences.home_region` 只含修改前后的两个地区代码与是否首次创建 `{ from, to, created }`）：`institution.delete`、`account.delete`、`card.create`、`card.delete`、`card_link.create`、`card_link.end`、`card_link.delete`、`channel.delete`、`preferences.home_region`。
+M2 记录以下审计动作（detail 只含 id 与后四位——`card_link.*` 为 `{ id, cardId, accountId }`，`channel.delete` 为 `{ id }`；`preferences.home_region` 只含修改前后的两个地区代码与是否首次创建 `{ from, to, created }`）：`institution.delete`、`account.delete`、`card.create`、`card.delete`、`card_link.create`、`card_link.end`、`card_link.delete`、`channel.delete`、`preferences.home_region`。
 
 审计记录的保留与内容限制见 DATA_MODEL §6.1：删除用户不删除其审计记录，记录中不得出现任何凭证。
 

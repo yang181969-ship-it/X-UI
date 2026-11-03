@@ -2,6 +2,7 @@ import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-quer
 import type { AccountCreate, AccountCurrencyInput, AccountDetail, AccountDto, AccountListItem, AccountListQuery, AccountUpdate } from '@xui/ledger-shared';
 import { del, get, patch, post, put, qs } from './client.ts';
 import { CARDS } from './cards.ts';
+import { CHANNELS } from './channels.ts';
 import { INSTITUTIONS } from './institutions.ts';
 
 /** Query key prefix: invalidating it refreshes every account list and detail. */
@@ -28,11 +29,11 @@ export const replaceCurrencies = (id: string, currencies: AccountCurrencyInput[]
 export const deleteAccount = (id: string) => del<{ ok: true }>(`/accounts/${encodeURIComponent(id)}`);
 
 /**
- * Refresh accounts, cards and institutions after a write to any of them: each embeds summaries of
- * the others (an account's linked cards, a card's issuer and linked accounts, an institution's
- * account and card counts).
+ * Refresh accounts, cards, institutions and payment channels after a write to any of them: each
+ * embeds summaries of the others (an account's linked cards and channels, a card's issuer, linked
+ * accounts and channels, an institution's counts, a channel's provider, balance account and sources).
  */
 export function useRefreshAccounts() {
   const qc = useQueryClient();
-  return () => Promise.all([ACCOUNTS, CARDS, INSTITUTIONS].map((key) => qc.invalidateQueries({ queryKey: [key] })));
+  return () => Promise.all([ACCOUNTS, CARDS, INSTITUTIONS, CHANNELS].map((key) => qc.invalidateQueries({ queryKey: [key] })));
 }

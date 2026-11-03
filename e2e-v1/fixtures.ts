@@ -90,6 +90,37 @@ export const LINKS_SEED = {
   otherUsersAccount: 'Other User Hidden Account',
 };
 
+/**
+ * The payment-channels journey's own user (M2-B5): a provider, an archived institution, a bank, a
+ * free e-money account (the new service's funds account), an e-money account already backing a
+ * seeded channel, a bank account and two cards. The journey creates its channels and sources
+ * through the UI. All names and last-four digits are fictional.
+ */
+export const CHANNELS_USER = { username: 'channels', password: 'e2e v1 channels password', displayName: '渠道测试用户' };
+export const CHANNELS_TOTP_SECRET = 'ONSWG4TFOQYTEMZUONSWG4TFOQYTEMZU';
+export const CHANNELS_SEED = {
+  provider: '示例支付服务商',
+  archivedProvider: '示例停业机构',
+  bank: '示例渠道银行',
+  /** e_money, free: the funds account of the payment service the journey creates. */
+  funds: '示例服务资金账户',
+  /** e_money, already the funds account of `oldChannel`. */
+  takenFunds: '示例占用资金账户',
+  oldChannel: '示例旧渠道',
+  /** bank account: an account source of the payment service; never offered for the wallet. */
+  bankAccount: '示例渠道储蓄',
+  card: '示例渠道借记卡',
+  cardLast4: '3141',
+  virtualCard: '示例渠道虚拟卡',
+  virtualLast4: '2718',
+  /** Typed in the UI. */
+  service: '示例支付服务',
+  wallet: '示例设备钱包',
+  /** Another user's channel, with a fixed id: never listed or reachable. */
+  otherUsersChannel: 'Other User Hidden Channel',
+  otherUsersChannelId: 'e2e-other-user-channel',
+};
+
 export function totp(secret: string, at = Date.now()): string {
   return new TOTP({ secret: Secret.fromBase32(secret), digits: 6, period: 30, algorithm: 'SHA1' }).generate({ timestamp: at });
 }

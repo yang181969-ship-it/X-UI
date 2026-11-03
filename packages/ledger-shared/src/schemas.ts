@@ -238,9 +238,10 @@ const channelShape = {
   sort: sortSchema.optional(),
 };
 
+/** A balance account on a channel that is not a payment_service: reported as BALANCE_ACCOUNT_KIND (API_SPEC §1.1, see ledgerErrorCode). */
 function channelRules(v: { channelType?: string; balanceAccountId?: string | null }, ctx: z.RefinementCtx) {
   if (v.balanceAccountId != null && v.channelType !== undefined && v.channelType !== 'payment_service') {
-    ctx.addIssue({ code: 'custom', path: ['balanceAccountId'], message: 'only payment_service channels have a balance account' });
+    ctx.addIssue({ code: 'custom', path: ['balanceAccountId'], message: 'BALANCE_ACCOUNT_KIND' satisfies LedgerErrorCode });
   }
 }
 
@@ -331,11 +332,28 @@ export const cardListQuerySchema = z.strictObject({
 /** GET /cards/:id/spending-source?currency= — the Event (purchase) currency, upper-case ISO 4217. */
 export const spendingSourceQuerySchema = z.strictObject({ currency: currencySchema });
 
+/** status filter of GET /payment-channels: omitted = not archived, 'all' = everything. */
+export const CHANNEL_STATUS_FILTERS = [...CHANNEL_STATUSES, 'all'] as const;
+
+/** GET /payment-channels?q=&type=&status= */
+export const paymentChannelListQuerySchema = z.strictObject({
+  /** Matched against the normalized channel name and the provider institution's name. */
+  q: z.string().max(NAME_MAX).optional(),
+  type: z.enum(CHANNEL_TYPES).optional(),
+  status: z.enum(CHANNEL_STATUS_FILTERS).optional(),
+});
+
 // ------------------------------------------------------------------ errors
 
-/** API error code for a failed request-body parse: CARD_TYPE_UNSUPPORTED or VALIDATION. */
-export function ledgerErrorCode(error: z.ZodError): Extract<LedgerErrorCode, 'VALIDATION' | 'CARD_TYPE_UNSUPPORTED'> {
-  return error.issues.some((i) => i.message === 'CARD_TYPE_UNSUPPORTED') ? 'CARD_TYPE_UNSUPPORTED' : 'VALIDATION';
+/**
+ * API error code for a failed request-body parse: CARD_TYPE_UNSUPPORTED (a card type other than
+ * debit / prepaid), BALANCE_ACCOUNT_KIND (a balance account on a channel that is not a
+ * payment_service) or VALIDATION.
+ */
+export function ledgerErrorCode(error: z.ZodError): Extract<LedgerErrorCode, 'VALIDATION' | 'CARD_TYPE_UNSUPPORTED' | 'BALANCE_ACCOUNT_KIND'> {
+  if (error.issues.some((i) => i.message === 'CARD_TYPE_UNSUPPORTED')) return 'CARD_TYPE_UNSUPPORTED';
+  if (error.issues.some((i) => i.message === 'BALANCE_ACCOUNT_KIND')) return 'BALANCE_ACCOUNT_KIND';
+  return 'VALIDATION';
 }
 
 export type ProfileSettingsUpdate = z.infer<typeof profileSettingsUpdateSchema>;
@@ -355,6 +373,7 @@ export type CardLinkUpdate = z.infer<typeof cardLinkUpdateSchema>;
 export type CardLinkEnd = z.infer<typeof cardLinkEndSchema>;
 export type PaymentChannelCreate = z.infer<typeof paymentChannelCreateSchema>;
 export type PaymentChannelUpdate = z.infer<typeof paymentChannelUpdateSchema>;
+export type PaymentChannelListQuery = z.infer<typeof paymentChannelListQuerySchema>;
 export type ChannelSourceCreate = z.infer<typeof channelSourceCreateSchema>;
 export type ChannelSourceUpdate = z.infer<typeof channelSourceUpdateSchema>;
 export type SpendingSourceQuery = z.infer<typeof spendingSourceQuerySchema>;
