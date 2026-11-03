@@ -176,8 +176,12 @@ export interface CardListItem extends CardDto {
 }
 
 export interface CardDetail extends CardDto {
+  /** Every link, ended ones included (status tells them apart). */
   links: CardLinkDto[];
+  /** Channels listing the card as an active funding source. */
   channels: ChannelSummary[];
+  /** Channel-source records of the card by status (ended ones too) — what a DELETE removes with it (M2-B3). */
+  channelSourceCounts: { active: number; ended: number };
 }
 
 /** POST /cards with createStoredValueAccount. */

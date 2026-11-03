@@ -3,7 +3,7 @@ import { and, eq, getTableColumns, inArray, sql, type SQL } from 'drizzle-orm';
 import type { BatchItem } from 'drizzle-orm/batch';
 import type { z } from 'zod';
 import type { DB } from '../db/client.ts';
-import { accountCurrencies, accounts, institutions } from '../db/schema.ts';
+import { accountCurrencies, accounts, cards, institutions } from '../db/schema.ts';
 
 /**
  * Account service rules. PATCH /accounts/:id goes through accountPatchValues, so the column set it
@@ -46,18 +46,27 @@ export type AccountRow = Required<typeof accounts.$inferInsert>;
  * after it (the account existed before the institution was archived).
  */
 export function accountCreateBatch(db: DB, account: AccountRow, currencies: CurrencyRow[]): Batch {
-  // The row's values, selected FROM its institution: one row while it is active, none otherwise.
-  // (Built with the query builder, not db.run(sql``): drizzle's D1 batch can't bind raw SQL.)
+  return [insertIfInstitutionActive(db, accounts, account, account.institutionId), ...currencies.map((row) => db.insert(accountCurrencies).values(row))];
+}
+
+/**
+ * INSERT INTO <table> SELECT <row's values> FROM institutions WHERE (institutionId, row.userId,
+ * active): writes the row while the institution is an active one of the same user, and nothing
+ * (without an error) otherwise. Used for new accounts and new cards, which need an active
+ * institution; the statement re-checks inside the batch what the route checked before it.
+ * Built with the query builder, not db.run(sql``): drizzle's D1 batch can't bind raw SQL.
+ */
+export function insertIfInstitutionActive<T extends typeof accounts | typeof cards>(db: DB, table: T, row: Required<T['$inferInsert']>, institutionId: string) {
   const values = Object.fromEntries(
-    Object.entries(getTableColumns(accounts)).map(([key, column]) => {
-      const value = account[key as keyof AccountRow];
-      if (value === undefined) throw new Error(`accountCreateBatch: no value for ${column.name}`);
+    Object.entries(getTableColumns(table)).map(([key, column]) => {
+      const value = (row as Record<string, unknown>)[key];
+      if (value === undefined) throw new Error(`insertIfInstitutionActive: no value for ${column.name}`);
       return [key, sql`${value}`.as(column.name)];
     }),
-  ) as Record<keyof AccountRow, SQL.Aliased>;
-  const activeInstitution = and(eq(institutions.id, account.institutionId), eq(institutions.userId, account.userId), eq(institutions.status, 'active'));
-  const insertAccount = db.insert(accounts).select(db.select(values).from(institutions).where(activeInstitution));
-  return [insertAccount, ...currencies.map((row) => db.insert(accountCurrencies).values(row))];
+  ) as Record<string, SQL.Aliased>;
+  const activeInstitution = and(eq(institutions.id, institutionId), eq(institutions.userId, row.userId), eq(institutions.status, 'active'));
+  // The generic table type is too wide for drizzle's select-shape check; the values are built from its own columns.
+  return db.insert(table as typeof accounts).select(db.select(values).from(institutions).where(activeInstitution) as never);
 }
 
 export interface CurrencyReplacePlan {

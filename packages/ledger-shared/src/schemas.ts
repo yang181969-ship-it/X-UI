@@ -19,6 +19,7 @@ import {
   WEBSITE_MAX,
   type LedgerErrorCode,
 } from './enums.ts';
+import { EXPIRING_WITHIN_DAYS_MAX, EXPIRY_STATUSES } from './expiry.ts';
 import { COUNTRY_CODES, CURRENCY_CODES } from './iso.ts';
 
 /**
@@ -297,6 +298,36 @@ export const accountListQuerySchema = z.strictObject({
   cardId: idSchema.optional(),
 });
 
+/** status filter of GET /cards: omitted = not closed (active and frozen), 'all' = everything. */
+export const CARD_STATUS_FILTERS = [...CARD_STATUSES, 'all'] as const;
+
+/**
+ * GET /cards?q=&network=&type=&form=&status=&issuerId=&accountId=&expiringWithinDays=&expiry=&today=
+ * Expiry rules: expiry.ts. `expiringWithinDays` alone keeps the cards expiring within that many
+ * days (not yet expired); with `expiry` it is the threshold between 'expiring' and 'valid'.
+ * `today` is the caller's calendar date (the web app sends the user's local date), so the filter
+ * and the tags on screen agree across time zones.
+ */
+export const cardListQuerySchema = z.strictObject({
+  /** Matched against the normalized card name, the issuer name and the last four digits. */
+  q: z.string().max(NAME_MAX).optional(),
+  network: z.enum(CARD_NETWORKS).optional(),
+  type: z.enum(CARD_TYPES).optional(),
+  form: z.enum(CARD_FORMS).optional(),
+  status: z.enum(CARD_STATUS_FILTERS).optional(),
+  issuerId: idSchema.optional(),
+  /** Cards with an unfinished link to this account. */
+  accountId: idSchema.optional(),
+  expiringWithinDays: z
+    .string()
+    .regex(/^\d{1,4}$/)
+    .transform(Number)
+    .pipe(z.int().min(0).max(EXPIRING_WITHIN_DAYS_MAX))
+    .optional(),
+  expiry: z.enum(EXPIRY_STATUSES).optional(),
+  today: isoDateSchema.optional(),
+});
+
 /** GET /cards/:id/spending-source?currency= — the Event (purchase) currency, upper-case ISO 4217. */
 export const spendingSourceQuerySchema = z.strictObject({ currency: currencySchema });
 
@@ -317,6 +348,8 @@ export type AccountCurrenciesReplace = z.infer<typeof accountCurrenciesReplaceSc
 export type AccountListQuery = z.infer<typeof accountListQuerySchema>;
 export type CardCreate = z.infer<typeof cardCreateSchema>;
 export type CardUpdate = z.infer<typeof cardUpdateSchema>;
+/** Query-string form (what the web app sends); the API parses it into z.infer<typeof cardListQuerySchema>. */
+export type CardListQuery = z.input<typeof cardListQuerySchema>;
 export type CardLinkCreate = z.infer<typeof cardLinkCreateSchema>;
 export type CardLinkUpdate = z.infer<typeof cardLinkUpdateSchema>;
 export type CardLinkEnd = z.infer<typeof cardLinkEndSchema>;

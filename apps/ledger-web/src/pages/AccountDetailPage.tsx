@@ -192,7 +192,7 @@ function CurrencyList({ account }: { account: AccountDetail }) {
   );
 }
 
-/** Links grouped by currency scope; ended links (history) last. Read-only in this step. */
+/** Links grouped by currency scope; ended links (history) last. Read-only in this step (cards link to their page). */
 function CardLinks({ links }: { links: CardLinkDto[] }) {
   const { t } = useTranslation();
   const current = links.filter((l) => l.status !== 'ended');
@@ -202,7 +202,7 @@ function CardLinks({ links }: { links: CardLinkDto[] }) {
     <div key={l.id} className="row-item" data-link={l.id}>
       <div className="row-main">
         <div className="row-title">
-          {l.card.name} <span className="muted">•••• {l.card.last4}</span>
+          <Link to={`/cards/${encodeURIComponent(l.cardId)}`}>{l.card.name}</Link> <span className="muted">•••• {l.card.last4}</span>
         </div>
         <div className="row-sub">
           {t(`accounts.roles.${l.role}`)}

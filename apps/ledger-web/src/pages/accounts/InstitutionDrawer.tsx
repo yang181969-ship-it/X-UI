@@ -4,6 +4,7 @@ import type { InstitutionDetail, InstitutionDto } from '@xui/ledger-shared';
 import dayjs from 'dayjs';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Link } from 'react-router';
 import { useInstitution } from '../../api/institutions.ts';
 import { InstitutionAvatar } from '../../components/InstitutionAvatar.tsx';
 import { regionName } from '../../lib/regions.ts';
@@ -105,7 +106,10 @@ export function InstitutionDrawer({ id, onClose, onEdit }: { id: string | null; 
             title={t('institutions.accounts')}
             items={inst.accounts.map((a) => ({ id: a.id, main: a.name, sub: `${regionName(a.accountCountry, i18n.language)} (${a.accountCountry})`, status: a.status }))}
           />
-          <RefList title={t('institutions.cards')} items={inst.cards.map((c) => ({ id: c.id, main: c.name, sub: `${c.network.toUpperCase()} •••• ${c.last4}`, status: c.status }))} />
+          <RefList
+            title={t('institutions.cards')}
+            items={inst.cards.map((c) => ({ id: c.id, main: <Link to={`/cards/${encodeURIComponent(c.id)}`}>{c.name}</Link>, sub: `${t(`cards.networks.${c.network}`)} •••• ${c.last4}`, status: c.status }))}
+          />
           <RefList title={t('institutions.channels')} items={inst.channels.map((c) => ({ id: c.id, main: c.name, status: c.status }))} />
         </div>
       )}

@@ -20,6 +20,8 @@ export type AuditAction =
   // M2 (API_SPEC §3.7): detail holds ids (and card last4) only — home_region changes hold the two region codes.
   | 'institution.delete'
   | 'account.delete'
+  | 'card.create'
+  | 'card.delete'
   | 'preferences.home_region';
 
 export async function audit(

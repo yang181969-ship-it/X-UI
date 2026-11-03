@@ -19,6 +19,7 @@ const TransactionsPage = lazy(() => import('./pages/TransactionsPage.tsx').then(
 const AccountsPage = lazy(() => import('./pages/AccountsPage.tsx').then((m) => ({ default: m.AccountsPage })));
 const AccountDetailPage = lazy(() => import('./pages/AccountDetailPage.tsx').then((m) => ({ default: m.AccountDetailPage })));
 const CardsPage = lazy(() => import('./pages/CardsPage.tsx').then((m) => ({ default: m.CardsPage })));
+const CardDetailPage = lazy(() => import('./pages/CardDetailPage.tsx').then((m) => ({ default: m.CardDetailPage })));
 const SettingsPage = lazy(() => import('./pages/SettingsPage.tsx').then((m) => ({ default: m.SettingsPage })));
 
 const standalone = (node: ReactNode) => <Suspense fallback={<FullPageSpin />}>{node}</Suspense>;
@@ -44,6 +45,7 @@ const router = createBrowserRouter([
       { path: 'accounts', element: <AccountsPage /> },
       { path: 'accounts/:id', element: <AccountDetailPage /> },
       { path: 'cards', element: <CardsPage /> },
+      { path: 'cards/:id', element: <CardDetailPage /> },
       { path: 'settings', element: <SettingsPage /> },
       { path: '*', element: <Navigate to="/" replace /> },
     ],

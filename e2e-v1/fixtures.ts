@@ -40,6 +40,36 @@ export const ACCOUNTS_SEED = {
 export const SETTINGS_USER = { username: 'settings', password: 'e2e v1 settings password', displayName: '设置测试用户' };
 export const SETTINGS_TOTP_SECRET = 'MFRGGZDFMZTWQ2LKMFRGGZDFMZTWQ2LK';
 
+/**
+ * The cards journey's own user. Card expiries are seeded relative to the day the server starts
+ * (this month = expiring soon, last month = expired). Card links have no API yet: seeded as rows.
+ * All names and last-four digits are fictional.
+ */
+export const CARDS_USER = { username: 'cards', password: 'e2e v1 cards password', displayName: '银行卡测试用户' };
+export const CARDS_TOTP_SECRET = 'MZXW6YTBOJRGC4TVMZXW6YTBOJRGC4TV';
+export const CARDS_SEED = {
+  bank: '示例环球银行',
+  emi: '示例预付机构',
+  archivedBank: '示例归档银行',
+  account: '示例储蓄账户',
+  /** Debit, this month's expiry (expiring soon), linked to the account (one active, one ended link). */
+  linkedCard: '示例旅行借记卡',
+  linkedLast4: '2468',
+  /** Expired last month, still active. */
+  expiredCard: '示例过期借记卡',
+  /** Expires in three years. */
+  longCard: '示例长期借记卡',
+  /** No expiry. */
+  noExpiryCard: '示例无期限卡',
+  /** Device wallet listing the linked card as one active and one ended source. */
+  wallet: '示例手机钱包',
+  /** Issued by the archived institution. */
+  archivedIssuerCard: '示例归档机构卡',
+  /** Another user's card, with a fixed id so the journey can try to open it. */
+  otherUsersCard: 'Other User Secret Card',
+  otherUsersCardId: 'e2e-other-user-card',
+};
+
 export function totp(secret: string, at = Date.now()): string {
   return new TOTP({ secret: Secret.fromBase32(secret), digits: 6, period: 30, algorithm: 'SHA1' }).generate({ timestamp: at });
 }

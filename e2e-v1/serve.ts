@@ -1,14 +1,14 @@
 /**
  * Starts the X-UI v1 production build (apps/ledger-web/dist served by apps/ledger-api) against a
  * throwaway database in data/e2e-v1/, so browser runs never touch data/x-ui-v1.db or the legacy
- * app. Seeds four users and a few fictional rows (the accounts and settings journeys have their own users).
+ * app. Seeds five users and a few fictional rows (the accounts, settings and cards journeys have their own users).
  */
 import { mkdirSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { createUser } from '../apps/ledger-api/src/auth/users.ts';
 import { openV1Db } from '../apps/ledger-api/src/db/client.ts';
-import { accountCardLinks, accountCurrencies, accounts, cards, institutions, paymentChannels, users } from '../apps/ledger-api/src/db/schema.ts';
+import { accountCardLinks, accountCurrencies, accounts, cards, institutions, paymentChannels, paymentChannelSources, users } from '../apps/ledger-api/src/db/schema.ts';
 import { readEnv } from '../apps/ledger-api/src/env.ts';
 import { newId } from '../apps/ledger-api/src/lib/id.ts';
 import { legacyDbPaths, main, REPO_ROOT } from '../apps/ledger-api/src/node.ts';
@@ -17,6 +17,9 @@ import {
   ACCOUNTS_TOTP_SECRET,
   ACCOUNTS_USER,
   BASE_URL,
+  CARDS_SEED,
+  CARDS_TOTP_SECRET,
+  CARDS_USER,
   E2E_V1_PORT,
   OTHER,
   OTHER_TOTP_SECRET,
@@ -56,10 +59,13 @@ const other = await activate(OTHER, OTHER_TOTP_SECRET);
 
 const now = Date.now();
 const refBank = newId(now);
+const otherBank = newId(now);
 await db.insert(institutions).values([
   { id: refBank, userId: owner.id, name: SEED.referencedInstitution, nameKey: SEED.referencedInstitution, country: 'SG', institutionType: 'bank', createdAt: now, updatedAt: now },
-  { id: newId(now), userId: other.id, name: SEED.otherUsersInstitution, nameKey: SEED.otherUsersInstitution.toLowerCase(), country: 'HK', institutionType: 'bank', createdAt: now, updatedAt: now },
+  { id: otherBank, userId: other.id, name: SEED.otherUsersInstitution, nameKey: SEED.otherUsersInstitution.toLowerCase(), country: 'HK', institutionType: 'bank', createdAt: now, updatedAt: now },
 ]);
+// Another user's card: the cards journey must never see it (fixed id, so it can try to open it).
+await db.insert(cards).values({ id: CARDS_SEED.otherUsersCardId, userId: other.id, issuerInstitutionId: otherBank, name: CARDS_SEED.otherUsersCard, network: 'visa', cardType: 'debit', last4: '9999', issuingCountry: 'HK', createdAt: now, updatedAt: now });
 const account = newId(now);
 await db.insert(accounts).values({
   id: account,
@@ -97,6 +103,58 @@ await db.insert(paymentChannels).values({ id: newId(now), userId: acc.id, name: 
 
 // The settings journey's own user: no user_preferences row, so it starts on the default (CN).
 await activate(SETTINGS_USER, SETTINGS_TOTP_SECRET);
+
+// The cards journey's own user and rows (fictional). Expiries are relative to today (local time,
+// as the browser sees it): this month = expiring soon, last month = expired.
+const cardsUser = await activate(CARDS_USER, CARDS_TOTP_SECRET);
+const ym = (monthsAhead: number) => {
+  const d = new Date();
+  const m = new Date(d.getFullYear(), d.getMonth() + monthsAhead, 1);
+  return `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, '0')}`;
+};
+const [cBank, cEmi, cArchived, cAccount] = [newId(now), newId(now), newId(now), newId(now)];
+await db.insert(institutions).values([
+  { id: cBank, userId: cardsUser.id, name: CARDS_SEED.bank, nameKey: CARDS_SEED.bank, country: 'SG', institutionType: 'bank', color: '#2f54eb', createdAt: now, updatedAt: now },
+  { id: cEmi, userId: cardsUser.id, name: CARDS_SEED.emi, nameKey: CARDS_SEED.emi, country: 'HK', institutionType: 'emi', color: '#13c2c2', createdAt: now, updatedAt: now },
+  { id: cArchived, userId: cardsUser.id, name: CARDS_SEED.archivedBank, nameKey: CARDS_SEED.archivedBank, country: 'GB', institutionType: 'bank', status: 'archived', createdAt: now, updatedAt: now },
+]);
+await db.insert(accounts).values({ id: cAccount, userId: cardsUser.id, institutionId: cBank, name: CARDS_SEED.account, nameKey: CARDS_SEED.account, accountType: 'bank', accountCountry: 'SG', createdAt: now, updatedAt: now });
+await db.insert(accountCurrencies).values([
+  { accountId: cAccount, userId: cardsUser.id, currency: 'SGD', isDefault: true, sort: 0, createdAt: now },
+  { accountId: cAccount, userId: cardsUser.id, currency: 'USD', sort: 1, createdAt: now },
+]);
+const cardRow = (name: string, issuer: string, extra: Partial<typeof cards.$inferInsert>) => ({
+  id: newId(now),
+  userId: cardsUser.id,
+  issuerInstitutionId: issuer,
+  name,
+  network: 'visa' as const,
+  cardType: 'debit' as const,
+  last4: '1357',
+  issuingCountry: 'SG',
+  createdAt: now,
+  updatedAt: now,
+  ...extra,
+});
+const linkedCard = cardRow(CARDS_SEED.linkedCard, cBank, { last4: CARDS_SEED.linkedLast4, expiresOn: ym(0), sort: 1 });
+await db.insert(cards).values([
+  linkedCard,
+  cardRow(CARDS_SEED.expiredCard, cBank, { network: 'mastercard', last4: '1122', expiresOn: ym(-1), sort: 2 }),
+  cardRow(CARDS_SEED.longCard, cBank, { network: 'unionpay', form: 'virtual', last4: '3344', expiresOn: ym(36), sort: 3 }),
+  cardRow(CARDS_SEED.noExpiryCard, cEmi, { cardType: 'prepaid', network: 'mastercard', last4: '5566', issuingCountry: 'HK', sort: 4 }),
+  cardRow(CARDS_SEED.archivedIssuerCard, cArchived, { last4: '7788', issuingCountry: 'GB', expiresOn: ym(36), sort: 5 }),
+]);
+await db.insert(accountCardLinks).values([
+  { id: newId(now), userId: cardsUser.id, cardId: linkedCard.id, accountId: cAccount, role: 'spending_source', isDefault: true, createdAt: now, updatedAt: now },
+  { id: newId(now), userId: cardsUser.id, cardId: linkedCard.id, accountId: cAccount, currency: 'USD', role: 'top_up_source', status: 'ended', endedOn: '2025-01-31', createdAt: now, updatedAt: now },
+]);
+// A device wallet with the linked card as an active and an ended source (what a delete would remove with it).
+const cWallet = newId(now);
+await db.insert(paymentChannels).values({ id: cWallet, userId: cardsUser.id, name: CARDS_SEED.wallet, nameKey: CARDS_SEED.wallet, channelType: 'device_wallet', createdAt: now, updatedAt: now });
+await db.insert(paymentChannelSources).values([
+  { id: newId(now), userId: cardsUser.id, channelId: cWallet, cardId: linkedCard.id, status: 'active', createdAt: now, updatedAt: now },
+  { id: newId(now), userId: cardsUser.id, channelId: cWallet, cardId: linkedCard.id, status: 'ended', createdAt: now, updatedAt: now },
+]);
 client.close();
 
 await main();

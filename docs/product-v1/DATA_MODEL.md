@@ -1,6 +1,6 @@
 # X-UI Product v1 — 数据模型（DATA_MODEL）
 
-> 状态：M1 表已实现；**M2 表已由迁移 `0001_m2_accounts` 实现（M2-B1，含 B1 加固：`user_preferences`、审计保留策略、`expires_on`、余额账户触发器）**；M2 API：机构（M2-B2.1）、账户及其币种（M2-B2.2）与个人设置 `home_region`（M2-B2.3）已实现，其余尚未实现。
+> 状态：M1 表已实现；**M2 表已由迁移 `0001_m2_accounts` 实现（M2-B1，含 B1 加固：`user_preferences`、审计保留策略、`expires_on`、余额账户触发器）**；M2 API：机构（M2-B2.1）、账户及其币种（M2-B2.2）与个人设置 `home_region`（M2-B2.3）、银行卡（M2-B3，复用 `cards` 表，无数据库变更）已实现，其余尚未实现。
 > 相关文档：[PRODUCT_SPEC.md](PRODUCT_SPEC.md) · [API_SPEC.md](API_SPEC.md) · [TEST_PLAN.md](TEST_PLAN.md)
 
 ## 1. 通用约定
@@ -130,6 +130,8 @@ API 保证：每个账户至少一个币种，恰好一个默认币种（且为 
 索引：`UNIQUE(id, user_id)`；`INDEX(user_id, status)`；`INDEX(user_id, issuer_institution_id)`。
 
 **明确不存在的字段**：`account_id`、`pan`、`pan_enc`、`bin`、`bin_info`、`cvv`、`pin`、`holder_name`、`credit_limit`、`statement_day`、`due_day`。
+
+`expires_on` 的语义（M2-B3 明确）：卡片有效至该月最后一天（含当天）；"已过期 / 即将到期"在读取时按调用方的日历日期推导（`@xui/ledger-shared` 的 `expiry.ts`，API_SPEC §3.4 实现说明），不存储，也不改变 `status`。表中没有卡片颜色、发卡日期列；卡面颜色取发卡机构的 `color`。
 
 ### 3.5 `account_card_links` 银行卡-账户关联（多对多）
 

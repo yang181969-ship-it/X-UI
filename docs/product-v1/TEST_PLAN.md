@@ -1,6 +1,6 @@
 # X-UI Product v1 — 测试计划（TEST_PLAN）
 
-> 状态：§1 为 M1 已有测试；**§2 起为 M2 测试设计（M2-A 修订版）；§3.12 的数据库用例、R-2、R-3、R-5、A-12（schema 与服务层）、H-3（数据库层）、D-3 已在 M2-B1 实现**，API 用例尚未实现；**M2-B2.1 已实现机构 API 用例（`institutions.test.ts`：I-1 – I-5、X-1 – X-4、U-1 – U-3 中与机构相关部分、R-1）、敏感扫描单元测试（`sensitive.test.ts`）与机构浏览器测试（`e2e-v1/institutions.spec.ts`）；M2-B2.2 已实现账户 API 用例（`accounts.test.ts`：A-1 – A-12、D-1、D-2（账户币种部分）、D-4、D-7 以及 X-1 – X-4、U-1 – U-3、R-1 中与账户相关部分）、新建账户须为有效机构（已归档 → 409、恢复后成功、他人机构恒为 404、归档与创建竞争）、替换币种在中间步骤失败时完整回滚（币种集合、默认 USD、`updated_at`、关联均不变），后两类在 libSQL 与本地 D1（`accounts-d1.test.ts`）均验证与账户浏览器测试（`e2e-v1/accounts.spec.ts`，独立测试用户）；M2-B2.3 已实现个人设置 API 用例（`settings.test.ts`：H-1 – H-4、H-6、D-6、R-1 中与设置相关部分（H-5 为 M3 规则），同一组用例在 libSQL 与本地 D1 各执行一次）与设置浏览器测试（`e2e-v1/settings.spec.ts`，独立测试用户）**。
+> 状态：§1 为 M1 已有测试；**§2 起为 M2 测试设计（M2-A 修订版）；§3.12 的数据库用例、R-2、R-3、R-5、A-12（schema 与服务层）、H-3（数据库层）、D-3 已在 M2-B1 实现**，API 用例尚未实现；**M2-B2.1 已实现机构 API 用例（`institutions.test.ts`：I-1 – I-5、X-1 – X-4、U-1 – U-3 中与机构相关部分、R-1）、敏感扫描单元测试（`sensitive.test.ts`）与机构浏览器测试（`e2e-v1/institutions.spec.ts`）；M2-B2.2 已实现账户 API 用例（`accounts.test.ts`：A-1 – A-12、D-1、D-2（账户币种部分）、D-4、D-7 以及 X-1 – X-4、U-1 – U-3、R-1 中与账户相关部分）、新建账户须为有效机构（已归档 → 409、恢复后成功、他人机构恒为 404、归档与创建竞争）、替换币种在中间步骤失败时完整回滚（币种集合、默认 USD、`updated_at`、关联均不变），后两类在 libSQL 与本地 D1（`accounts-d1.test.ts`）均验证与账户浏览器测试（`e2e-v1/accounts.spec.ts`，独立测试用户）；M2-B2.3 已实现个人设置 API 用例（`settings.test.ts`：H-1 – H-4、H-6、D-6、R-1 中与设置相关部分（H-5 为 M3 规则），同一组用例在 libSQL 与本地 D1 各执行一次）与设置浏览器测试（`e2e-v1/settings.spec.ts`，独立测试用户）；M2-B3 已实现银行卡 API 用例（`cards.test.ts`：C-1 – C-4、C-6、C-7、C-8、X-1 – X-5 以及 U-1 – U-3、R-1 中与银行卡相关部分，另含新建/改挂须为有效机构、归档与创建竞争、改挂机构与归档/删除竞争（卡片各列不变）、储值账户联合创建在卡/账户/币种/关联/审计任一步注入失败时整库不变且重试只生成一套完整记录、审计与卡片写入同事务（创建与删除）、"已提交但未收到响应"时重发的行为（非幂等，生成第二套完整记录）、删除只影响该卡自身的关联与渠道来源、并发删除；同一组用例在 libSQL 与本地 D1 各执行一次）、到期规则单元测试（`expiry.test.ts`）与银行卡浏览器测试（`e2e-v1/cards.spec.ts`，独立测试用户）；C-5 由 `m2-schema.test.ts` 覆盖**。
 > 相关文档：[PRODUCT_SPEC.md](PRODUCT_SPEC.md) · [DATA_MODEL.md](DATA_MODEL.md) · [API_SPEC.md](API_SPEC.md)
 
 ## 0. 运行方式与准入标准
@@ -75,6 +75,7 @@ M2-B 完成标准：
 | C-5 | 无卡号列 | `schemaColumns` 中不存在 `pan`、`pan_enc`、`bin`、`bin_info`、`cvv`、`pin`、`holder_name`、`account_id`（cards 表） |
 | C-6 | 有效期 | `2028-01`、`2028-07`、`2028-12` 成功；`2028-00`、`2028-13`、`2028-1`、`07/28` → 400；原始 SQL（SQLite 与 D1）对 `2028-00`、`2028-13`、`2028-1` → CHECK 失败；`expiringWithinDays` 筛选正确 |
 | C-7 | 预付卡自动建储值账户 | 一次请求创建卡 + `stored_value` 账户 + 默认币种 + `spending_source` 默认关联；`accountCountry` 缺省 → 400 且**卡和账户都未创建**；对借记卡传 `createStoredValueAccount` → 400 |
+| C-8 | 到期分类（M2-B3） | 有效至到期月份最后一天：本月、下月、跨年、两个月后、已过期、无到期日期分别归类正确；月末当天为 `expiring`（剩 0 天）、次日为 `expired`；闰年 2 月 29 日与平年 2 月 28 日；阈值边界（60 / 61 天）与 `expiringWithinDays` 调整；同一日历日期在任何运行时区结果相同，同一时刻在上海与洛杉矶是不同日期（客户端发送 `today=`，服务端与页面一致）；`today` 与服务器 UTC 日期相差超过 1 天 → 400；到期不改变 `status` |
 
 ### 3.4 银行卡-账户关联
 

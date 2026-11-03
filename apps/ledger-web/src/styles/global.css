@@ -1496,3 +1496,255 @@ html[data-theme='light'] .login-blob {
   display: block;
   margin: 0 0 4px;
 }
+
+/* ---------------------------------------------------------------- bank cards (M2-B3) */
+
+/* Card faces are drawn in CSS from the issuer colour: no images, no network artwork. */
+.card-face {
+  --face: #1677ff;
+  --face-text: #fff;
+  --face-soft: rgba(255, 255, 255, 0.72);
+  position: relative;
+  aspect-ratio: 1.586;
+  width: 100%;
+  border-radius: 14px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow: hidden;
+  color: var(--face-text);
+  background:
+    radial-gradient(120% 90% at 100% 0%, rgba(255, 255, 255, 0.22), transparent 55%),
+    linear-gradient(135deg, var(--face) 0%, color-mix(in srgb, var(--face) 55%, #000) 100%);
+  box-shadow:
+    0 8px 22px rgba(0, 0, 0, 0.22),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  user-select: none;
+}
+.card-face.is-light {
+  --face-text: #14161a;
+  --face-soft: rgba(20, 22, 26, 0.68);
+  background:
+    radial-gradient(120% 90% at 100% 0%, rgba(255, 255, 255, 0.4), transparent 55%),
+    linear-gradient(135deg, var(--face) 0%, color-mix(in srgb, var(--face) 78%, #000) 100%);
+}
+.card-face.is-virtual {
+  background:
+    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.06) 0 2px, transparent 2px 10px),
+    linear-gradient(135deg, var(--face) 0%, color-mix(in srgb, var(--face) 45%, #000) 100%);
+}
+.card-face.is-frozen {
+  filter: saturate(0.45);
+}
+.card-face.is-closed {
+  filter: grayscale(1);
+  opacity: 0.7;
+}
+.card-face-top,
+.card-face-bottom {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.card-face-issuer {
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.card-face-type {
+  margin-left: auto;
+  flex: none;
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--face-soft);
+  color: var(--face-soft);
+}
+.card-face-chip {
+  display: block;
+  width: 38px;
+  height: 28px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, #f5d98b, #c9a14a);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18);
+}
+.card-face-virtual {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--face-soft);
+}
+.card-face-name {
+  font-size: 13px;
+  color: var(--face-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.card-face-number {
+  font-family: var(--ant-font-family-code, ui-monospace, monospace);
+  font-size: 17px;
+  letter-spacing: 0.08em;
+}
+.card-face-expiry {
+  font-family: var(--ant-font-family-code, ui-monospace, monospace);
+  font-size: 12px;
+  color: var(--face-soft);
+}
+.card-face-network {
+  margin-left: auto;
+  font-weight: 700;
+  font-style: italic;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+}
+.card-face-status {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(-8deg);
+  padding: 2px 12px;
+  border: 2px solid currentColor;
+  border-radius: 6px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  background: rgba(0, 0, 0, 0.25);
+  color: #fff;
+}
+.card-face.size-sm {
+  max-width: 220px;
+  padding: 10px 12px;
+}
+.card-face.size-lg {
+  max-width: 360px;
+  flex: none;
+}
+
+.page-desc {
+  margin-top: -4px;
+}
+.expiry-reminders {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+  gap: 18px;
+}
+.card-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 16px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    transform 0.15s var(--ease-out);
+}
+.card-tile:hover,
+.card-tile:focus-visible {
+  border-color: var(--ant-color-border);
+  outline: none;
+}
+.card-tile:hover .card-face {
+  transform: translateY(-2px);
+}
+.card-tile .card-face {
+  transition: transform 0.2s var(--ease-out);
+}
+.card-tile-meta {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.card-tile-meta .row-main {
+  min-width: 0;
+  flex: 1;
+}
+.card-tile-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.card-tile-tags .ant-tag,
+.expiry-tag .ant-tag {
+  margin-inline-end: 0;
+}
+.card-table .clickable-row {
+  cursor: pointer;
+}
+.card-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.card-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.card-detail-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 20px;
+}
+.card-detail-head .card-face {
+  width: 340px;
+  max-width: 100%;
+}
+.card-detail-head .row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-width: 240px;
+}
+.card-detail-actions {
+  margin-top: 8px;
+}
+.card-detail .ref-section + .ref-section {
+  margin-top: 16px;
+}
+.stored-value-box {
+  margin: 0 0 16px;
+  padding: 12px 14px 2px;
+  border: 1px dashed var(--ant-color-border);
+  border-radius: 10px;
+}
+.card-last4-help {
+  margin: -12px 0 16px;
+}
+.delete-confirm-label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.delete-confirm-label .ant-input {
+  max-width: 160px;
+  font-family: var(--ant-font-family-code, ui-monospace, monospace);
+  letter-spacing: 0.2em;
+}
+@media (prefers-reduced-motion: reduce) {
+  .card-tile,
+  .card-tile .card-face {
+    transition: none;
+  }
+}
+.delete-impact ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+.delete-confirm-label .field-note {
+  margin: 0;
+}

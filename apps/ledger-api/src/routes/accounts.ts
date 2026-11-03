@@ -9,7 +9,6 @@ import {
   type AccountDto,
   type AccountInUseDetails,
   type AccountListItem,
-  type CardLinkDto,
   type CardSummary,
   type ChannelSummary,
   type CurrencyInUseDetails,
@@ -24,6 +23,7 @@ import { audit } from '../lib/audit.ts';
 import { isForeignKeyViolation, isTriggerAbort, likeContains, rejectSensitive } from '../lib/guards.ts';
 import { body, fail, notFound, query } from '../lib/http.ts';
 import { newId } from '../lib/id.ts';
+import { accountSummary, cardSummary, channelSummary, institutionSummary, toLinkDto } from './summaries.ts';
 import { accountCreateBatch, accountPatchValues, currencyReplacePlan, currencyRows, type AccountRow as NewAccountRow } from '../services/accounts.ts';
 
 /**
@@ -44,17 +44,6 @@ import { accountCreateBatch, accountPatchValues, currencyReplacePlan, currencyRo
 
 type C = Context<AppBindings>;
 type AccountRow = typeof accounts.$inferSelect;
-
-const institutionSummary = {
-  id: institutions.id,
-  name: institutions.name,
-  institutionType: institutions.institutionType,
-  color: institutions.color,
-  status: institutions.status,
-};
-const cardSummary = { id: cards.id, name: cards.name, network: cards.network, last4: cards.last4, cardType: cards.cardType, status: cards.status };
-const accountSummary = { id: accounts.id, name: accounts.name, accountCountry: accounts.accountCountry, status: accounts.status };
-const channelSummary = { id: paymentChannels.id, name: paymentChannels.name, channelType: paymentChannels.channelType, status: paymentChannels.status };
 
 const toDto = (r: AccountRow, institution: InstitutionSummary, currencies: AccountCurrencyDto[]): AccountDto => ({
   id: r.id,
@@ -102,7 +91,8 @@ async function currenciesByAccount(c: C, accountId?: string): Promise<Map<string
   return out;
 }
 
-async function loadDto(c: C, id: string): Promise<AccountDto> {
+/** The account DTO of one of the caller's accounts (404 otherwise); also used by POST /cards for a new stored-value account. */
+export async function accountDto(c: C, id: string): Promise<AccountDto> {
   const [r] = await selectAccounts(c).where(ownAccount(c, id));
   if (!r) notFound('account');
   return toDto(r.row, r.institution, (await currenciesByAccount(c, id)).get(id) ?? []);
@@ -250,12 +240,12 @@ export const accountRoutes = new Hono<AppBindings>()
       }
       throw err;
     }
-    return c.json(await loadDto(c, id), 201);
+    return c.json(await accountDto(c, id), 201);
   })
 
   .get('/:id', async (c) => {
     const id = c.req.param('id');
-    const dto = await loadDto(c, id);
+    const dto = await accountDto(c, id);
     const { db } = c.var.deps;
     const uid = c.var.user.id;
     const [links, balanceOf, sourceOf] = await Promise.all([
@@ -276,25 +266,7 @@ export const accountRoutes = new Hono<AppBindings>()
     ]);
     const detail: AccountDetail = {
       ...dto,
-      links: links.map(
-        ({ link: l, card, account }): CardLinkDto => ({
-          id: l.id,
-          cardId: l.cardId,
-          accountId: l.accountId,
-          currency: l.currency,
-          role: l.role,
-          isDefault: l.isDefault,
-          priority: l.priority,
-          status: l.status,
-          startedOn: l.startedOn,
-          endedOn: l.endedOn,
-          notes: l.notes,
-          card,
-          account,
-          createdAt: l.createdAt,
-          updatedAt: l.updatedAt,
-        }),
-      ),
+      links: links.map(toLinkDto),
       balanceOfChannels: balanceOf,
       sourceOfChannels: sourceOf,
     };
@@ -331,7 +303,7 @@ export const accountRoutes = new Hono<AppBindings>()
       if (isTriggerAbort(err, 'BALANCE_ACCOUNT_KIND')) balanceKind(await balanceChannels(c, id));
       throw err;
     }
-    return c.json(await loadDto(c, id));
+    return c.json(await accountDto(c, id));
   })
 
   .put('/:id/currencies', async (c) => {
@@ -363,7 +335,7 @@ export const accountRoutes = new Hono<AppBindings>()
       }
       throw err;
     }
-    return c.json(await loadDto(c, id));
+    return c.json(await accountDto(c, id));
   })
 
   .delete('/:id', async (c) => {

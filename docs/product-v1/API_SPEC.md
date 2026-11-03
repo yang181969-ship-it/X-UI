@@ -1,6 +1,6 @@
 # X-UI Product v1 — API 规格（API_SPEC）
 
-> 状态：§2 为 M1 已实现接口；§3 起为 M2 设计（M2-A 修订版，含 M2-B1 加固）。**§3.2 金融机构已在 M2-B2.1 实现，§3.3 账户已在 M2-B2.2 实现，§3.1 个人设置已在 M2-B2.3 实现**，其余 M2 接口尚未实现。
+> 状态：§2 为 M1 已实现接口；§3 起为 M2 设计（M2-A 修订版，含 M2-B1 加固）。**§3.2 金融机构已在 M2-B2.1 实现，§3.3 账户已在 M2-B2.2 实现，§3.1 个人设置已在 M2-B2.3 实现，§3.4 银行卡的 CRUD 已在 M2-B3 实现（`spending-source` 推荐除外）**，其余 M2 接口尚未实现。
 > 相关文档：[PRODUCT_SPEC.md](PRODUCT_SPEC.md) · [DATA_MODEL.md](DATA_MODEL.md) · [TEST_PLAN.md](TEST_PLAN.md)
 
 ## 1. 通用约定
@@ -172,6 +172,23 @@ M2 没有需要 step-up 的操作（不保存 PAN，没有查看卡号接口）�
 ```
 - `cardType` 只接受 `debit`、`prepaid`；其他值 → 400 `CARD_TYPE_UNSUPPORTED`。
 - 不接受 `pan`、`cardNumber`、`bin`、`cvv`、`pin`、`holderName` 等字段（400 `VALIDATION`）。
+
+实现说明（M2-B3）：
+- 已实现 `GET /cards`、`POST /cards`、`GET /cards/:id`、`PATCH /cards/:id`、`DELETE /cards/:id`。`GET /cards/:id/spending-source`（§3.4.1）依赖关联，随关联步骤实现，本步骤未实现。未新增迁移，`0000`、`0001` 不变。
+- 列表直接返回数组，按 `sort`、`name` 排序；`status` 缺省返回未停用的卡（`active`、`frozen`），`all` 返回全部；`q` 先做与 `name_key` 相同的规范化（NFKC → trim → 合并空白 → 小写），匹配卡片名称、发卡机构名称或后四位（`cards` 表没有 `name_key` 列，比较在服务端进行，`%`、`_` 按字面）；`issuerId` 按发卡机构；`accountId` 只匹配未结束的关联；`linkedAccounts` 为未结束关联的不同账户（含账户的 `accountCountry`）。查询参数严格校验（未知参数 → 400）。
+- **到期**（规则在 `@xui/ledger-shared` 的 `expiry.ts`，API 与前端共用同一函数）：
+  - `expires_on`（`YYYY-MM`）表示卡片**有效至该月最后一天（含当天）**，闰年 2 月为 29 日；`daysLeft` = 该日 − `today`（整日数，按日历日期计算，与运行环境时区无关）。
+  - 分类：`none`（未填有效期）、`expired`（`daysLeft < 0`，即到期月份的次月 1 日起）、`expiring`（`0 ≤ daysLeft ≤ 阈值`）、`valid`（`daysLeft > 阈值`）。原规格未规定"即将到期"阈值，M2-B3 取默认 **60 天**（`DEFAULT_EXPIRING_WITHIN_DAYS`）。
+  - `expiringWithinDays=N`（规格原有，0–3650）单独使用 = 尚未过期且 `N` 天内到期；`expiry=none|valid|expiring|expired`（M2-B3 新增）按分类筛选，阈值为 `expiringWithinDays`（若给出）或默认 60 天。
+  - `today=YYYY-MM-DD`（M2-B3 新增）：调用方的日历日期。Web 端发送用户本地日期，因此列表筛选与页面标签使用同一天，不因客户端与服务端时区不同而矛盾；只接受与服务器 UTC 日期相差不超过 1 天的值（覆盖 UTC−12 至 UTC+14），否则 400 `VALIDATION`；缺省为服务器的 UTC 日期。
+  - 到期是读取时推导的，不写入数据库，**不改变 `status`**：已过期 ≠ 停用（`closed`），冻结/停用只由用户操作。
+- `POST` → 201 `{ card }`；带 `createStoredValueAccount` 时 `{ card, account, link }`。发卡机构须为当前用户的有效机构：他人的或不存在 → 404（不泄露状态），已归档 → 409 `INSTITUTION_ARCHIVED`（`details.institutionId`）。与新建账户相同，卡片行以 `INSERT … SELECT … FROM institutions WHERE … status = 'active'` 写入，检查之后被归档的机构不会写入任何行（返回 409）。储值账户的 `institutionId` 缺省为发卡机构，同样须为有效机构；`accountCountry` 必填；卡 → 账户（`stored_value`、`active`）→ 唯一默认币种 → 关联（`spending_source`、`currency = null`、`is_default = 1`）→ 审计记录，五条语句在一个 `db.batch()` 中（libSQL 与 D1 上均为单个事务），任一失败（含审计写入失败）全部回滚，不留下任何部分记录（M2-B3 复审：在 libSQL 与 D1 上对卡、账户、币种、关联、审计逐一注入失败验证）。
+  - **重试语义**：`POST /cards` 不是幂等的，没有幂等键。失败（4xx / 5xx）的请求不留下任何记录，重试是安全的；若事务已提交但客户端没有收到响应，重发同一请求会**再创建一套完整的卡（及储值账户、币种、关联、审计）**，不会产生孤立记录，但会出现重复，需要用户删除多余的一张（M2-B3 未增加幂等键或数据库结构，需另行批准）。
+- `PATCH`：部分更新；空请求体、未知字段（`userId`、`id`、`createdAt`、`pan` 等）→ 400 `VALIDATION`；`cardType` 非 `debit` / `prepaid` → 400 `CARD_TYPE_UNSUPPORTED`。`issuerInstitutionId` 可修改（共享 Schema 允许，用于纠正误选的发卡机构）：新机构须为当前用户的有效机构（404 / 409），并在 `UPDATE` 条件内复核（`EXISTS … status = 'active'`，预检查之后被归档 → 409、被删除 → 404，卡片所有字段不变；libSQL 与 D1 均验证）；保持原机构（即使已归档）不检查状态。状态在 `active`、`frozen`、`closed` 之间任意切换，不修改关联及其默认标记。卡片被并发删除 → 404。
+- `DELETE` → 200 `{ ok: true }`：级联删除该卡的关联（含已结束）与渠道来源，不删除账户、币种或渠道；不存在、属于他人或已被并发请求删除 → 404（`DELETE … RETURNING` 判断）；审计 `card.delete` 记 `{ id, last4 }`，与删除在同一个 batch 中（审计从卡片行读取，卡片已不存在则不写；删除被拒绝或审计写入失败则一起回滚）。M3 起被流水引用 → 409 `IN_USE`（NO ACTION 外键）。`GET /cards/:id` 另返回 `channelSourceCounts: { active, ended }`（M2-B3 新增，渠道来源记录按状态计数），供删除确认使用。前端删除确认按类别列出将被删除的记录数量（账户关联：有效 / 暂停 / 已结束；渠道来源：有效 / 已结束）及不会删除的内容；有引用时"改为停用"为主操作，删除须输入后四位——仅用于防止误操作，不是身份验证。
+- 敏感扫描字段：`name`、`notes`、`createStoredValueAccount.name`（`details.fields = [{ field, kind }]`，不回显文本）。`last4` 严格为 4 个 ASCII 数字（全角数字、空格、完整卡号 → 400，校验错误不回显输入值）。
+- 审计：`card.create` 记 `{ id, last4 }`（同时创建储值账户时另含 `accountId`、`linkId`），`card.delete` 记 `{ id, last4 }`；不记录名称、备注或请求体。两者都以 `INSERT INTO audit_log … SELECT … FROM cards WHERE id = … AND user_id = …` 写在卡片写入的同一个 batch 中：审计记录存在当且仅当对应的创建 / 删除已提交，不会出现"报告了已回滚的操作"或"操作已提交但无审计"。
+- 地区：`issuingCountry` 必填，不从发卡机构国家推断，修改机构国家不影响卡片；卡片详情分别展示发卡机构所在地、发卡国家/地区与关联账户的 `accountCountry`。DTO 无卡片颜色字段（DATA_MODEL 无此列），卡面颜色取发卡机构的头像颜色。
 
 预付卡自动创建储值账户（仅 `cardType = prepaid`）：
 ```json
