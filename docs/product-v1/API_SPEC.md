@@ -1,7 +1,8 @@
 # X-UI Product v1 — API 规格（API_SPEC）
 
 > 状态：§2 为 M1 已实现接口；§3 起为 M2 设计（M2-A 修订版，含 M2-B1 加固）。**§3.2 金融机构已在 M2-B2.1 实现，§3.3 账户已在 M2-B2.2 实现，§3.1 个人设置已在 M2-B2.3 实现，§3.4 银行卡的 CRUD 已在 M2-B3 实现，§3.5 银行卡-账户关联与 §3.4.1 `spending-source` 推荐已在 M2-B4 实现，§3.6 支付渠道及其资金来源已在 M2-B5 实现**（M2 全部接口已实现）。
-> 相关文档：[PRODUCT_SPEC.md](PRODUCT_SPEC.md) · [DATA_MODEL.md](DATA_MODEL.md) · [TEST_PLAN.md](TEST_PLAN.md)
+> **§5 为 M3 交易接口的定稿规格**（P1–P9 已获用户批准，见 [M3_DECISIONS.md](M3_DECISIONS.md)），尚未实现（M3-B2 起）。
+> 相关文档：[PRODUCT_SPEC.md](PRODUCT_SPEC.md) · [DATA_MODEL.md](DATA_MODEL.md) · [TEST_PLAN.md](TEST_PLAN.md) · [M3_DECISIONS.md](M3_DECISIONS.md)
 
 ## 1. 通用约定
 
@@ -14,7 +15,7 @@
 - 请求体用 zod `.strict()` 校验：未知字段 → 400 `VALIDATION`。
 - 他人的数据一律 404 `NOT_FOUND`（不泄露存在性）。
 - 列表默认按 `sort, name` 排序；`status` 筛选缺省时返回非关闭/非归档项，`status=all` 返回全部。
-- 所有 DTO **不包含任何金额或余额字段**。
+- 所有 DTO **不包含任何金额或余额字段**。（M3 定稿 K4：本条适用于 M1、M2 的全部 DTO——机构、账户、币种、银行卡、关联、推荐、渠道、来源、设置，它们继续不含金额或余额；M3 交易 DTO（§5）包含交易金额，但同样不含余额、汇率或换算金额。）
 
 ### 1.1 错误码
 
@@ -32,6 +33,8 @@
 | `CURRENCY_IN_USE` | 409 | 币种被关联引用，不能移除（应改为关闭） |
 | `INSTITUTION_ARCHIVED` | 409 | 机构已归档，不能新建账户（先恢复机构）；`details.institutionId`（M2-B2.2 复审新增；M2-B3 起同样用于新银行卡的发卡机构，M2-B5 起用于新指定的支付渠道服务机构） |
 | `LINK_STATE` | 409 | 关联当前的状态不允许该操作：已结束的关联不能再改状态、用途、优先级或设为默认，暂停的关联不能设为默认；`details.status`（M2-B4 新增；M2-B5 起同样用于已结束的支付渠道来源：不能设为默认或再次结束） |
+
+M3 交易接口新增的错误码，以及 `CURRENCY_NOT_ON_ACCOUNT`、`IN_USE`、`CURRENCY_IN_USE` 在 M3 中的扩展，见 §5.1、§5.12。
 
 ## 2. M1 已实现接口（不变）
 
@@ -341,9 +344,265 @@ M3 新建流水时：`exact_currency` 预填资金账户与扣款币种（扣款
 
 M2 记录以下审计动作（detail 只含 id 与后四位——`card_link.*` 为 `{ id, cardId, accountId }`，`channel.delete` 为 `{ id }`；`preferences.home_region` 只含修改前后的两个地区代码与是否首次创建 `{ from, to, created }`）：`institution.delete`、`account.delete`、`card.create`、`card.delete`、`card_link.create`、`card_link.end`、`card_link.delete`、`channel.delete`、`preferences.home_region`。
 
-审计记录的保留与内容限制见 DATA_MODEL §6.1：删除用户不删除其审计记录，记录中不得出现任何凭证。
+审计记录的保留与内容限制见 DATA_MODEL §6.1：删除用户不删除其审计记录，记录中不得出现任何凭证。M3 新增的审计动作见 §5.11。
 
 ## 4. 不在 M2 的接口
 - 查看卡号（`/cards/:id/reveal`）—— 不保存 PAN，因此不存在。
 - BIN 查询 —— 不存储；如未来需要，只在浏览器端临时查询。
-- 任何余额、金额、汇总接口 —— M3 起再定义（且不做换算合计）。
+- 任何余额、金额、汇总接口 —— M3 起再定义（且不做换算合计）。（M3 定稿：交易金额与按原币种的统计见 §5；余额接口与换算合计仍然不存在。）
+
+## 5. M3 交易接口
+
+> 依据：M3-A.2 为准，未覆盖处继承 M3-A.1、M3-A；P1–P9 已获用户批准（[M3_DECISIONS.md](M3_DECISIONS.md)）。产品规则见 PRODUCT_SPEC §7，数据结构、触发器与写入链见 DATA_MODEL §10，测试见 TEST_PLAN §5。
+
+| 方法 | 路径 | 说明 | 幂等键 |
+|---|---|---|---|
+| GET | `/transactions` | 列表（当前版本） | — |
+| POST | `/transactions` | 新建 | **必填** |
+| GET | `/transactions/summary` | 按原币种统计 | — |
+| GET | `/transactions/:id` | 详情（当前版本 + 版本列表） | — |
+| GET | `/transactions/:id/revisions/:revision` | 某一历史版本 | — |
+| POST | `/transactions/:id/revisions` | 补录金额 / 事实更正 / 快照更正 | **必填** |
+| POST | `/transactions/:id/void` | 作废 | **必填** |
+| PATCH | `/transactions/:id/notes` | 修改备注 | 不使用 |
+
+路由注册时 `/summary` 必须在 `/:id` 之前；`/transactions` 加入 `PROTECTED_MOUNTS`（TEST_PLAN R-1 自动覆盖）。
+
+### 5.0 通用规则
+
+#### 5.0.1 认证、隔离与校验
+- 认证、Origin、CSRF 沿用 §1：未登录 401；非 GET 请求缺少 `x-xui-csrf` 或 Origin 不在白名单 → 403；请求体上限 1 MB。
+- 请求体与查询参数一律 zod `.strict()`：未知字段 → 400 `VALIDATION`。服务端字段出现在请求中同样 → 400：`homeRegion`（除新建时的 `declaredHomeRegion` 与快照更正的 `homeRegion`）、`fundingAccountCountry`（除快照更正）、`merchantScope`、`transferScope`、`foreignStatus`、`classifierVersion`、`revision`、`*Exponent`、`countrySource`、`currencyStatusAtSave`、`carriedFromEntryId`、`status`，以及更正请求中的 `type` 与 `notes`。
+- 他人的交易、账户、银行卡、渠道一律 404 `NOT_FOUND`。请求引用的账户、卡、渠道**先确认属于当前用户**，再报告其他错误，不以 400 / 409 暴露他人数据的存在或状态。幂等键按用户隔离：其他用户使用相同的键互不影响。
+- 敏感信息扫描（§1、DATA_MODEL §6，无绕过）：`merchantName`、`counterparty.name`、`counterparty.institution`、`counterparty.accountHint`、`notes`、更正 `reason`、作废 `reason`；命中 → 400 `SENSITIVE_DATA`，`details.fields`，不回显文本。`counterparty.accountHint` 只接受与 `numberHint` 相同的 1–4 位尾号。
+
+#### 5.0.2 金额与日期
+- 金额为该币种最小单位的 JSON 整数，`1 ≤ amount ≤ 999 999 999 999 999`；`0`、负数、小数、字符串 → 400 `VALIDATION`。前端用 `@xui/ledger-shared` 的解析函数把十进制文本（如 `"78.30"`）按该币种小数位转换为整数，全程字符串运算，不经浮点；小数位多于该币种规定 → 前端与服务端均拒绝。
+- 小数位（`*Exponent`）由服务端按 ISO 4217 表写入并在响应中返回，客户端不提供。
+- 统计金额以十进制字符串（最小单位）返回，避免超过 2^53。
+- `occurredOn`：真实日期 `YYYY-MM-DD`，不晚于服务器 UTC 日期的次日；`occurredTime`：`HH:MM`（00:00–23:59）或 `null`；`postedOn`：`null` 或不早于 `occurredOn` 的真实日期。日期为流水上的当地日期，不做时区换算。
+
+#### 5.0.3 幂等键（仅新建、更正、作废）
+- 请求头 `Idempotency-Key`：16–64 个字符，`[0-9A-Za-z_-]`。前端在**打开表单时**用 `crypto.randomUUID()` 生成，同一次提交的所有重试（超时、断网、5xx）使用同一个键；收到成功响应或关闭表单后丢弃。缺少 → 400 `IDEMPOTENCY_KEY_REQUIRED`；格式不合法 → 400 `IDEMPOTENCY_KEY_INVALID`。
+- `PATCH /transactions/:id/notes` 与所有 GET **不使用**幂等键（备注修改重复提交结果相同）；即使带了该请求头也不读取。
+- 请求哈希 v1（`hash_version = 1`）：SHA-256（WebCrypto）小写 hex，输入为 UTF-8 规范化 JSON `{ "v": 1, "operation": …, "transactionId": <路径 id 或 null>, "body": <zod 解析后的请求体> }`：对象键在每一层按字典序排列，`entries` 按方向排序（`out` 在前），无空白，整数按 JSON 整数书写。
+- 处理顺序：认证 → CSRF → 键格式 → 请求体校验与敏感扫描 → 计算哈希 → 查找当前用户的同一键：
+  - 已存在且哈希相同（按键行的 `hash_version` 计算）→ **重放**：状态码取键行保存的 `response_status`，响应体为由 `result_revision`、`result_event_id` 重建的 `TransactionWriteResult`（只含不可变数据），并加响应头 `Idempotency-Replayed: true`。重放的是**首次成功操作的结果**，不是交易的当前状态：之后的更正、作废、备注修改、账户改名都不影响重放内容。
+  - 已存在且哈希不同 → 409 `IDEMPOTENCY_CONFLICT`，`details = { operation, transactionId }`，不写入任何数据。
+  - 不存在 → 归属与预检查 → 写入 batch（DATA_MODEL §10.10，最后一步插入完成态键行）→ 按 DATA_MODEL §10.10 的"batch 之后的路由处理"给出结果。并发的同键请求由数据库串行执行，后执行者成为重放。
+- 失败的请求（任何 4xx / 5xx）不保存键，用同一键重试会重新执行。
+- 保留期：新建的键永久保留；更正、作废的键保留 30 天。过期后用同一键重试更正或作废，会因版本已变化或已作废得到 409 `REVISION_CONFLICT` / `TRANSACTION_VOIDED`，不会重复写入。
+
+### 5.1 错误码（M3 新增与扩展）
+
+| code | HTTP | 含义 |
+|---|---|---|
+| `IDEMPOTENCY_KEY_REQUIRED` | 400 | 新建、更正、作废缺少 `Idempotency-Key` |
+| `IDEMPOTENCY_KEY_INVALID` | 400 | 键的长度或字符不合法 |
+| `ENTRY_SHAPE` | 400 | Entry 的数量、方向或账户与交易类型不符；对手方字段与类型或 Entry 数量不符；Event 金额为空但不属于"他人汇入且对方金额未知"（DATA_MODEL §10.7）；`details.rule` |
+| `CURRENCY_NOT_ON_ACCOUNT` | 400 | （扩展）Entry 币种不是该账户已登记的币种；或该币种已关闭，而本次是当前交易且不属于沿用；`details = { direction, currency, status }` |
+| `CLOSED_CURRENCY_ACK_REQUIRED` | 400 | 历史补录使用已关闭币种，但该 Entry 未带 `closedCurrencyAck: true`；`details.direction` |
+| `CONFIRMED_DOMESTIC` | 400 | 新版本会是已确认纯境内（`foreign_status = 'domestic'`），不予保存；更正与快照更正时 `details.suggestion = 'void'`（提示作废该交易） |
+| `IDEMPOTENCY_CONFLICT` | 409 | 同一键对应不同的请求内容；`details = { operation, transactionId }` |
+| `REVISION_CONFLICT` | 409 | `baseRevision` 不是当前版本；`details.currentRevision` |
+| `TRANSACTION_VOIDED` | 409 | 交易已作废，不能更正或再次作废 |
+| `CONCURRENT_CHANGE` | 409 | 保存过程中所依据的快照（账户法域、本国地区、币种状态）被并发修改，服务端重试一次后仍不一致 |
+| `IN_USE` | 409 | （扩展）账户、银行卡、渠道被流水引用；`details.references.transactions`（§5.12） |
+| `CURRENCY_IN_USE` | 409 | （扩展）账户币种被关联**或流水**引用，不能移除（§5.12） |
+
+沿用：`VALIDATION`、`BAD_JSON`、`SENSITIVE_DATA`、`NOT_FOUND`。数据库触发器错误（`LEDGER_*`）不直接暴露，由服务端映射为上表的错误码；不应出现的映射为 500 `INTERNAL`。
+
+### 5.2 DTO
+
+字段映射：`accountId` ↔ `funding_account_id`，`currency` ↔ `funding_currency`，`fundingAccountCountry` ↔ `funding_account_country`（`in` 方向时指入账账户、入账币种，DATA_MODEL §10.4）；其余为列名的 camelCase。
+
+```ts
+type EventFacts = {
+  eventId: string; revision: number;
+  revisionKind: 'original' | 'settlement' | 'fact_correction' | 'snapshot_correction';
+  correctionReason: string | null; recordMode: 'current' | 'backfill';
+  occurredOn: string; occurredTime: string | null; postedOn: string | null;
+  eventCurrency: string | null; eventAmount: number | null; eventCurrencyExponent: number | null;
+  merchantName: string | null; merchantCountry: string | null;
+  cardId: string | null; paymentChannelId: string | null; transferMethod: TransferMethod | null;
+  counterparty: { kind: 'self' | 'third_party'; name: string | null; country: string | null;
+                  institution: string | null; accountHint: string | null } | null;
+  homeRegion: string; homeRegionSource: 'preference_at_save' | 'carried' | 'user_declared' | 'user_corrected';
+  merchantScope: 'foreign' | 'domestic' | 'unknown' | null;
+  transferScope: TransferScope | null;          // DATA_MODEL §10.3 的 9 个值
+  foreignStatus: 'foreign' | 'domestic' | 'undetermined';
+  classifierVersion: number; createdAt: number;
+};
+type EntryFacts = {
+  entryId: string; direction: 'out' | 'in'; accountId: string; currency: string; currencyExponent: number;
+  amount: number | null; amountStatus: 'confirmed' | 'pending';
+  fundingAccountCountry: string; countrySource: 'account_at_save' | 'carried' | 'user_corrected';
+  currencyStatusAtSave: 'active' | 'closed'; closedCurrencyAck: boolean; carriedFromEntryId: string | null;
+};
+// 写操作的结果：只含不可变数据，首次响应与重放逐字节相同
+type TransactionWriteResult = {
+  operation: 'transaction.create' | 'transaction.correct' | 'transaction.void';
+  transactionId: string; txnType: TxnType;
+  revision: number;                      // 本次操作产生或作用的版本（不是 currentRevision）
+  eventId: string;
+  statusAfter: 'active' | 'voided';      // 由操作决定：新建、更正为 active，作废为 voided
+  recordedAt: number;                    // 该版本 Event 的 createdAt，作废时为 voidedAt
+  event: EventFacts; entries: EntryFacts[];
+  void: { voidedAt: number; reason: string | null } | null;
+};
+// 读取：含可变数据（备注、当前状态）与当前名称摘要
+type TransactionDto = {
+  id: string; txnType: TxnType; status: 'active' | 'voided'; currentRevision: number;
+  notes: string | null; createdAt: number; updatedAt: number; voidedAt: number | null; voidReason: string | null;
+  event: EventFacts;
+  entries: (EntryFacts & { account: { id: string; name: string; accountCountry: string; status: AccountStatus } })[];
+  card: { id: string; name: string; network: CardNetwork; last4: string; status: CardStatus } | null;
+  paymentChannel: { id: string; name: string; channelType: ChannelType; status: ChannelStatus } | null;
+  revisions: { revision: number; revisionKind: EventFacts['revisionKind']; correctionReason: string | null; createdAt: number }[];
+};
+```
+
+- `counterparty`：转账时恒为对象（`kind` 由交易类型决定，两侧均已登记的本人调拨其余字段为 null），消费、退款时为 `null`。
+- `TransactionWriteResult` **不含**：备注、账户 / 卡 / 渠道的当前名称、`currentRevision`、当前状态、提示（warnings）。
+- `TransactionDto.entries[].account` 是当前摘要（名称可能已修改），`fundingAccountCountry` 是保存时的快照；界面分别标注。
+- 列表项为 `TransactionDto` 去掉 `revisions`。
+
+### 5.3 `GET /transactions`
+
+- 查询参数（均可选，严格校验）：`from`、`to`（`YYYY-MM-DD`，`from ≤ to`，按 `occurredOn`）、`type`、`accountId`、`cardId`、`channelId`、`currency`（任一 Entry 的币种）、`amountStatus`（`pending` | `confirmed`：含该状态 Entry 的交易）、`foreignStatus`（`foreign` | `undetermined` | `domestic` | `all`，缺省 `all`）、`recordMode`（`current` | `backfill`）、`status`（`active` 缺省 | `voided` | `all`）、`q`（规范化后匹配商户名、对手方名称、备注，`%`、`_` 按字面）、`cursor`、`limit`（1–100，缺省 50）。
+- 不提供"非境外"筛选：信息不足既不是境外也不是境内，只能按三态之一筛选。
+- 只返回各交易的**当前版本**；他人的 `accountId` / `cardId` / `channelId` 作为筛选值时结果为空（不报错、不泄露）。
+- 排序：`occurredOn` 降序、`occurredTime` 降序（空值在后）、交易 `createdAt` 降序、`id` 降序；`cursor` 是对该排序键的不透明编码。
+- → 200 `{ items: TransactionListItem[], nextCursor: string | null }`。
+
+### 5.4 `POST /transactions`
+
+请求头：`Idempotency-Key`（必填）。请求体：
+
+```json
+{
+  "type": "merchant_spend",
+  "recordMode": "current",
+  "declaredHomeRegion": null,
+  "occurredOn": "2026-10-20", "occurredTime": "14:05", "postedOn": null,
+  "eventCurrency": "USD", "eventAmount": 1000,
+  "merchantName": "Example Store", "merchantCountry": "US",
+  "cardId": "…", "paymentChannelId": null, "transferMethod": null,
+  "counterparty": null,
+  "entries": [{ "direction": "out", "accountId": "…", "currency": "HKD", "amountStatus": "confirmed", "amount": 7830, "closedCurrencyAck": false }],
+  "notes": null
+}
+```
+
+规则（违反 → 400，错误码见 §5.1）：
+- `type` ∈ 四种类型；`recordMode` 缺省为 `current`。
+- `declaredHomeRegion`：仅 `recordMode = 'backfill'` 时可填（ISO alpha-2），保存为 `home_region_source = 'user_declared'`，与当前设置无关、不修改设置（P4）；`current` 时出现 → 400 `VALIDATION`。未填时取保存时的设置值（无设置为 `CN`）。
+- Entry 形状按 DATA_MODEL §10.7.1：消费 1 条 `out`；退款 1 条 `in`；第三方 1 条；本人调拨 2 条（一出一入、不同账户，`counterparty` 为 `null`）或 1 条（`counterparty.country` 必填）。
+- `counterparty`：转账时为 `{ name?, country?, institution?, accountHint? }`（类型决定 `kind`，请求不提供）；消费、退款时必须为 `null`。`cardId` 只用于消费、退款；`transferMethod` 只用于转账。
+- `eventCurrency` / `eventAmount`：含义见 DATA_MODEL §10.3.1；只有第三方汇款且唯一 Entry 为 `in` 时 `eventAmount` 可为 `null`；有 `eventAmount` 时必须有 `eventCurrency`。
+- 每条 Entry：`amountStatus` 必须显式给出——`pending` 要求 `amount: null`，`confirmed` 要求金额；`currency` 必须是该账户已登记的币种；已关闭币种只在 `recordMode = 'backfill'` 且 `closedCurrencyAck: true` 时允许（P7）。
+- 账户、卡、渠道的状态不限制（关闭、冻结、过期、归档都可用于记录），也不要求卡与账户之间存在关联。
+- 三态分类由服务端按快照计算；结果为已确认纯境内 → 400 `CONFIRMED_DOMESTIC`（P2）。`undetermined` 照常保存。
+
+→ 201 `TransactionWriteResult`（`operation = 'transaction.create'`，`revision = 1`）。重放时状态码同为 201。
+
+错误：400（上述规则、`VALIDATION`、`SENSITIVE_DATA`、`IDEMPOTENCY_KEY_*`）；404（账户 / 卡 / 渠道不属于当前用户或不存在）；409 `IDEMPOTENCY_CONFLICT`、`CONCURRENT_CHANGE`。
+
+### 5.5 `GET /transactions/:id`
+
+→ 200 `TransactionDto`（任何状态，包括已作废）；不存在或属于他人 → 404。
+
+### 5.6 `GET /transactions/:id/revisions/:revision`
+
+- `revision` 为 ≥ 1 的整数；只返回已发布的版本（`≤ currentRevision`）。
+- → 200 `{ transactionId, txnType, revision, event: EventFacts, entries: (EntryFacts & { account })[] }`；交易不存在、属于他人或版本不存在 → 404。
+
+### 5.7 `POST /transactions/:id/revisions`
+
+请求头：`Idempotency-Key`（必填）。请求体按 `kind` 区分，都带 `baseRevision`（必须等于当前版本）：
+
+**补录金额 `settlement`**——只把待补录的 Entry 改为确认金额，其余全部沿用：
+```json
+{ "kind": "settlement", "baseRevision": 1, "reason": null,
+  "entries": [{ "direction": "in", "amount": 783000 }] }
+```
+列出的每个方向必须是上一版本中 `pending` 的 Entry（否则 400 `VALIDATION`）；未列出的 Entry 原样沿用。
+
+**事实更正 `fact_correction`**——提交更正后的完整事实（字段同新建，但没有 `type`、`declaredHomeRegion`、`notes`），`reason` 必填：
+```json
+{ "kind": "fact_correction", "baseRevision": 2, "reason": "资金账户选错",
+  "recordMode": "current", "occurredOn": "2026-10-20", "occurredTime": "14:05", "postedOn": null,
+  "eventCurrency": "USD", "eventAmount": 1000, "merchantName": "Example Store", "merchantCountry": "US",
+  "cardId": "…", "paymentChannelId": null, "transferMethod": null, "counterparty": null,
+  "entries": [{ "direction": "out", "accountId": "…", "currency": "USD", "amountStatus": "confirmed", "amount": 1000, "closedCurrencyAck": false }] }
+```
+与上一版本同账户的 Entry（不论方向是否改变）沿用其快照（对已关闭币种还需同币种才属于沿用）；新账户取保存时的法域；`home_region` 沿用。与上一版本完全相同 → 400 `VALIDATION`。
+
+**快照更正 `snapshot_correction`**（P5）——只更正快照，事实全部沿用，`reason` 必填：
+```json
+{ "kind": "snapshot_correction", "baseRevision": 2, "reason": "当时的本国地区记录错误",
+  "homeRegion": "HK",
+  "entries": [{ "direction": "out", "fundingAccountCountry": "SG" }] }
+```
+`homeRegion` 与 `entries` 至少一项；每个值必须与上一版本不同，`direction` 必须存在于上一版本；只作用于这一笔交易（没有批量接口）。界面在提交前展示旧值 → 新值及分类变化，由用户确认。
+
+→ 201 `TransactionWriteResult`（`operation = 'transaction.correct'`，`revision = baseRevision + 1`）。
+
+错误：404；409 `REVISION_CONFLICT`（`details.currentRevision`）、`TRANSACTION_VOIDED`、`IDEMPOTENCY_CONFLICT`、`CONCURRENT_CHANGE`；400 `CONFIRMED_DOMESTIC`（新版本会是已确认纯境内，`details.suggestion = 'void'`：该交易不属于境外金融活动，应作废）、`ENTRY_SHAPE`、`CURRENCY_NOT_ON_ACCOUNT`、`CLOSED_CURRENCY_ACK_REQUIRED`、`VALIDATION`、`SENSITIVE_DATA`、`IDEMPOTENCY_KEY_*`。
+
+并发：两个更正基于同一 `baseRevision` 时只有先提交者成功，后者 409 `REVISION_CONFLICT`；更正与作废竞争时同理。
+
+### 5.8 `POST /transactions/:id/void`
+
+请求头：`Idempotency-Key`（必填）。请求体：`{ "baseRevision": 2, "reason": null }`（`reason` 可选，≤200）。
+
+- 只能作废 `active` 交易的当前版本；作废是终态，交易不再计入统计，全部版本保留，备注仍可修改。没有恢复或永久删除接口。
+- → 200 `TransactionWriteResult`（`operation = 'transaction.void'`，`statusAfter = 'voided'`，`revision` = 被作废时的当前版本，`void` 非空）。
+- 错误：404；409 `REVISION_CONFLICT`、`TRANSACTION_VOIDED`、`IDEMPOTENCY_CONFLICT`；400 `VALIDATION`、`SENSITIVE_DATA`、`IDEMPOTENCY_KEY_*`。
+
+### 5.9 `PATCH /transactions/:id/notes`
+
+- 请求体：`{ "notes": string | null }`（≤1000，敏感扫描；`.strict()`，空请求体或其他字段 → 400 `VALIDATION`）。
+- 需要认证与 CSRF；**不使用幂等键**；不生成版本、不改变分类与统计；任何状态（包括已作废）都可修改；最后提交者生效；不保留修改历史（P9）；不记审计（与 M2 备注一致）。
+- → 200 `{ id, notes, updatedAt }`；不存在或属于他人 → 404。
+
+### 5.10 `GET /transactions/summary`
+
+- 查询参数（严格校验）：`from`、`to`（可选，按 `occurredOn`）、`type`、`currency`。
+- 只统计 `active` 交易当前版本中 `confirmed` 的 Entry；作废、被取代版本与待补录金额不计入；Event 金额不参与；不跨币种合计（DATA_MODEL §10.12）。
+- 响应：
+
+```ts
+type SummaryGroup = {
+  txnType: TxnType; direction: 'out' | 'in'; currency: string; currencyExponent: number;
+  merchantScope: 'foreign' | 'domestic' | 'unknown' | null; transferScope: TransferScope | null;
+  accountScope: 'foreign' | 'domestic';   // 由该 Entry 的法域快照与该交易的 home_region 快照推导
+  amount: string;                          // 精确的最小单位十进制字符串
+  count: number;
+};
+type TransactionSummaryDto = {
+  from: string | null; to: string | null;
+  homeRegions: string[];                   // 期间内交易保存时的本国地区（多于一个时界面提示）
+  foreign: SummaryGroup[]; undetermined: SummaryGroup[]; domestic: SummaryGroup[];   // domestic 在 P2 下恒为空
+  pending: { foreignStatus: 'foreign' | 'domestic' | 'undetermined'; txnType: TxnType; direction: 'out' | 'in';
+             currency: string; currencyExponent: number; count: number }[];
+};
+```
+三块互不合并；消费与退款、汇出与到账、本人调拨与第三方汇款分组列出，不相加。
+
+### 5.11 审计
+
+M3 审计动作（与写入在同一 batch，按 DATA_MODEL §10.10；detail 只含 id 与版本号，不记金额、名称、对手方或请求体）：`transaction.create` `{ id, eventId, revision }`、`transaction.correct` `{ id, eventId, revision, kind }`、`transaction.void` `{ id, eventId, revision }`。重放、幂等冲突与备注修改不记审计。
+
+### 5.12 对 M2 接口的影响（M3-B2 实现）
+
+- `DELETE /accounts/:id`：被任何版本的 Entry 引用 → 409 `IN_USE`，`details.references` 增加 `transactions`（引用它的交易数）；检查之后新增的引用由 NO ACTION 外键拒绝，同样 409。
+- `PUT /accounts/:id/currencies`：移除被 Entry 引用的币种 → 409 `CURRENCY_IN_USE`（`details.currencies` 包含这些币种）；改为 `closed` 照常允许。
+- `DELETE /cards/:id`、`DELETE /payment-channels/:id`：被 Event 引用 → 409 `IN_USE`，`details.references.transactions`。
+- 前端删除确认显示"被 N 笔流水引用，只能关闭 / 归档"。M2 的 DTO 不增加金额字段。
+
+### 5.13 预填与提示（前端）
+
+- 选择银行卡后调用既有的 `GET /cards/:id/spending-source?currency=<Event 币种>`（§3.4.1，不变）：`exact_currency` 预填账户与币种，扣款金额可预填为 Event 金额（可修改，两者分别保存）；`conversion_required` 只预填账户，扣款币种必须由用户选择；`no_match` 由用户选择。`recordMode = 'backfill'` 时推荐只作参考，不自动套用。
+- 非阻断提示（账户冻结或关闭、卡停用或在发生日已过期、渠道已归档、卡与账户之间没有有效关联、所选币种已关闭）由前端用 `@xui/ledger-shared` 的同一函数在提交前计算显示；写操作的响应不含提示，以保证重放内容确定。
+- **提示的边界**：提示只依据服务端返回的当前数据（账户、银行卡、渠道、关联、币种的读取接口）在录入时计算，仅供用户参考；它不是历史事实，不保存，不参与重放、分类或统计，也不作为任何校验的依据。所有业务约束都由服务端与数据库执行，与前端是否显示提示无关：Entry 形状与方向、币种登记与已关闭币种规则（补录 + `closedCurrencyAck` 或沿用，P7）、快照只由服务端读取并核实来源、三态分类的计算与发布检查 C1–C7（含已确认纯境内的拒绝，P2）、乐观并发与幂等。交易保存后，界面只展示已保存的事实（`EventFacts`、`EntryFacts`，其中唯一的保存时状态是 `currencyStatusAtSave`）以及另行标注为"当前"的账户、银行卡、渠道摘要，不重建保存当时的提示。

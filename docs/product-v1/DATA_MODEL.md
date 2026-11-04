@@ -1,7 +1,8 @@
 # X-UI Product v1 — 数据模型（DATA_MODEL）
 
 > 状态：M1 表已实现；**M2 表已由迁移 `0001_m2_accounts` 实现（M2-B1，含 B1 加固：`user_preferences`、审计保留策略、`expires_on`、余额账户触发器）**；M2 API：机构（M2-B2.1）、账户及其币种（M2-B2.2）与个人设置 `home_region`（M2-B2.3）、银行卡（M2-B3，复用 `cards` 表，无数据库变更）、银行卡-账户关联与默认消费来源推荐（M2-B4，复用 `account_card_links` 表，无数据库变更）、支付渠道及其资金来源（M2-B5，复用 `payment_channels`、`payment_channel_sources` 表，无数据库变更）已实现。
-> 相关文档：[PRODUCT_SPEC.md](PRODUCT_SPEC.md) · [API_SPEC.md](API_SPEC.md) · [TEST_PLAN.md](TEST_PLAN.md)
+> **M3（交易账本）数据模型已定稿：§10**（M3-A → M3-A.1 → M3-A.2，P1–P9 已获用户批准，见 [M3_DECISIONS.md](M3_DECISIONS.md)）；迁移 `0002_m3_transactions` 尚未编写（M3-B1）。§8 是 M2 时期对 M3 的要求，保留原文，以 §10 为实施依据。
+> 相关文档：[PRODUCT_SPEC.md](PRODUCT_SPEC.md) · [API_SPEC.md](API_SPEC.md) · [TEST_PLAN.md](TEST_PLAN.md) · [M3_DECISIONS.md](M3_DECISIONS.md)
 
 ## 1. 通用约定
 
@@ -44,6 +45,10 @@
 1. M3 保存流水时，把**交易发生时**（保存时）该用户的 `home_region` 复制到 Event 的 `home_region` 快照列（§8.1）。
 2. 修改 `user_preferences.home_region` **不得**改变任何已存在流水的 `home_region` 快照；不提供、也不自动执行任何回写或批量重分类。
 3. 历史交易的境外判断只读取流水自身的快照，**不得**用当前的 `home_region` 重新解释。
+
+M3 定稿时经用户批准的两项例外（§10.9；不改变以上三条对"修改设置"的约束）：
+- **P4 补录声明**：`record_mode = 'backfill'` 的新交易可由用户显式声明当时的本国地区（`home_region_source = 'user_declared'`），该值与当前 `user_preferences` 无关、不读取也不写入设置。
+- **P5 逐笔快照更正**：用户可对**单笔**交易显式提交快照更正，生成新版本（`home_region_source = 'user_corrected'`），旧版本保留。这是用户对一笔交易事实的更正，不是由设置变化触发的回写；批量更正与自动重分类仍然禁止。
 
 ### 3.1 `institutions` 金融机构
 
@@ -237,7 +242,7 @@ M2-B5 实现说明（§3.6、§3.7，无数据库变更）：
 | payment_channel_sources | (card_id, user_id) | cards(id, user_id) | CASCADE |
 | payment_channel_sources | (account_id, user_id) | accounts(id, user_id) | CASCADE |
 
-此外，上表每个子表都有自己的 `user_id → users(id) ON DELETE CASCADE`。
+此外，上表每个子表都有自己的 `user_id → users(id) ON DELETE CASCADE`。M3 新增的外键见 §10.6。
 
 说明：
 - **限制删除用 `NO ACTION`，不用 `RESTRICT`。** `RESTRICT` 在父行删除的瞬间检查，会与同一语句中的级联删除冲突（例如删除用户时级联删除机构，而账户尚未被级联删除；或删除账户时级联删除币种，而关联尚未被级联删除）。`NO ACTION` 在语句结束时检查，级联完成后不再有残留引用即通过；单独删除仍被引用的父行则失败。API 在删除前先检查引用并返回 409，数据库约束是最后防线。
@@ -429,6 +434,8 @@ erDiagram
 
 M3 的具体表名与其余字段在 M3 设计时确定；以下是 M2 对 M3 的硬性要求。暂称 `transaction_events`（Event）与 `transaction_entries`（Entry），一个 Event 至少一个 Entry。
 
+> **M3 定稿说明**：本节保留 M2 原文作为约束来源；正式定义见 §10，实施以 §10 为准。§10 全部满足本节要求，另有经批准的细化与例外：表名沿用 `transaction_events`、`transaction_entries`，另加交易头 `transactions` 与 `ledger_idempotency_keys`（K5）；Event 按版本保存、不可修改；Entry 增加 `direction`，入账方向的 `funding_*` 指入账账户与币种（K2）；Entry 指向 Event 的外键为 `(event_id, txn_type, user_id)`，仍为 CASCADE；`event_amount` 仅在他人汇入且对方金额未知时可空（P8，§10.3.1）；已关闭币种在历史补录与沿用时受控可用（P7，§10.9.4），因此 PRODUCT_SPEC §6.1 第 5 条与 TEST_PLAN M3-10 的"有效币种"要求按 §10.9.4 执行。
+
 ### 8.1 Event：原始交易
 
 | 字段 | 说明 |
@@ -480,3 +487,431 @@ M3 的具体表名与其余字段在 M3 设计时确定；以下是 M2 对 M3 �
   - 本地 SQLite：libsql 文件数据库，经 `openV1Db()`（身份检查 + 迁移），连接上已开启 `PRAGMA foreign_keys = ON`；
   - 本地 D1：wrangler `getPlatformProxy()` 启动的 workerd 内存 D1（`persist: false`、`remoteBindings: false`），迁移按 `_journal.json` 顺序、用 wrangler 的 SQL 拆分器逐条执行，与 `wrangler d1 migrations apply` 一致；**不连接远程 D1**。
   - 两个环境都先用一条明显非法的外键插入确认外键确实在强制执行，避免"约束未开启"导致的假通过。
+
+## 10. M3 数据模型（正式定义）
+
+> 依据：M3-A.2 为准，未覆盖处继承 M3-A.1、M3-A；P1–P9 已获用户批准（[M3_DECISIONS.md](M3_DECISIONS.md)）。产品规则见 PRODUCT_SPEC §7，接口见 API_SPEC §5，测试见 TEST_PLAN §5。本节是迁移 `0002_m3_transactions`（M3-B1）与写入服务（M3-B2、B3）的实施依据。
+> **验证状态**：§10.13 所列关键机制只在**内存 libSQL** 上做过探针验证；**本地 D1 尚未验证**，由 M3-B1 完成。任何一项在 D1 上不成立时，B1 停止并报告，不得自行改用其他方案。
+
+### 10.1 总览与约定
+
+```mermaid
+erDiagram
+  users ||--o{ transactions : owns
+  transactions ||--|{ transaction_events : "revisions (immutable)"
+  transaction_events ||--|{ transaction_entries : "entries (immutable)"
+  accounts ||--o{ transaction_entries : "funding account (NO ACTION)"
+  account_currencies ||--o{ transaction_entries : "funding currency (NO ACTION)"
+  cards |o--o{ transaction_events : "card used (NO ACTION)"
+  payment_channels |o--o{ transaction_events : "channel used (NO ACTION)"
+  transactions ||--o{ ledger_idempotency_keys : "write results"
+```
+
+- 四张新表：`transactions`（交易头：身份、状态、当前版本、备注、作废信息；唯一可更新的表，且只能按 §10.7.2 的方式更新）→ `transaction_events`（Event：交易某一版本的原始事实，写入后不可修改）→ `transaction_entries`（Entry：该版本中一个真实账户的资金变动，写入后不可修改）；`ledger_idempotency_keys`（财务写操作的完成结果，只插入）。
+- 沿用 §1 的约定：text 时间排序 id、epoch 毫秒时间戳、`YYYY-MM-DD` 业务日期、每表 `user_id → users(id) ON DELETE CASCADE`、复合外键与 `UNIQUE(id, user_id)`、CHECK 与 zod 双重约束、只用 `db.batch()`、单条语句 ≤ 100 个绑定参数、batch 中只用 drizzle 查询构造器（D1 batch 不能绑定 `db.run(sql\`\`)`）。
+- 列表与统计只读取 **`status = 'active'` 交易的当前版本**（`transaction_events.revision = transactions.current_revision`）；被取代的版本与已作废交易只出现在历史中。
+- **金额**：该币种最小单位的正整数，`1 ≤ amount ≤ 999 999 999 999 999`（低于 2^53）；`0`、负数、小数一律拒绝（数据库 `CHECK(typeof(x) = 'integer' AND x BETWEEN 1 AND 999999999999999)`）。方向由 `direction` 表示，不使用负数。每个金额旁保存小数位快照（`*_exponent`，0–4），取自 `@xui/ledger-shared` 的 ISO 4217 最小单位表（来源与 §1 币种清单相同：SIX List One 的 `CcyMnrUnts`）；ISO 将来修改某币种小数位时历史金额不受影响。
+- 文本长度沿用 M2 约定：名称类 1–80，原因类 ≤ 200，备注 ≤ 1000；全部做敏感信息扫描（§6）。对方账号只允许尾号（与 `accounts.number_hint` 相同的 CHECK），不保存完整账号或 IBAN。
+
+### 10.2 `transactions` 交易头
+
+| 字段 | 类型 | 空 | 默认 | 约束 / 说明 |
+|---|---|---|---|---|
+| id | text | 否 | | 主键 |
+| user_id | text | 否 | | → users（CASCADE） |
+| txn_type | text | 否 | | `CHECK IN ('merchant_spend','merchant_refund','own_transfer','third_party_transfer')`；建立后不可修改 |
+| status | text | 否 | `'active'` | `CHECK IN ('active','voided')`；作废为终态 |
+| current_revision | integer | 否 | 0 | `CHECK(current_revision >= 0)`；0 = 尚未发布（只在写入 batch 内短暂存在） |
+| notes | text | 是 | | 备注，≤1000，敏感扫描；**不属于交易事实**，可随时修改（含作废后），不保留修改历史（P9） |
+| voided_at | integer | 是 | | |
+| void_reason | text | 是 | | ≤200，敏感扫描 |
+| voided_op_id | text | 是 | | 作废该交易的那次请求的 `op_id`（§10.10） |
+| created_at, updated_at | integer | 否 | | `created_at` = 录入时间 |
+
+CHECK：`(status = 'voided') = (voided_at IS NOT NULL)`；`(status = 'voided') = (voided_op_id IS NOT NULL)`；`void_reason IS NULL OR status = 'voided'`；`status = 'active' OR current_revision >= 1`。
+索引：`UNIQUE(id, user_id)`；`UNIQUE(id, txn_type, user_id)`（Event 复合外键目标）；`INDEX(user_id, status)`。
+
+### 10.3 `transaction_events` Event 版本
+
+| 字段 | 类型 | 空 | 约束 / 说明 |
+|---|---|---|---|
+| id | text | 否 | 主键 |
+| user_id | text | 否 | → users（CASCADE） |
+| transaction_id | text | 否 | `(transaction_id, txn_type, user_id)` → transactions（CASCADE） |
+| txn_type | text | 否 | 与交易头一致（由复合外键保证） |
+| revision | integer | 否 | `CHECK(revision >= 1)`；`UNIQUE(transaction_id, revision)` |
+| revision_kind | text | 否 | `CHECK IN ('original','settlement','fact_correction','snapshot_correction')`；`CHECK((revision = 1) = (revision_kind = 'original'))` |
+| correction_reason | text | 是 | ≤200，敏感扫描；`original` 时必须为 NULL；`fact_correction`、`snapshot_correction` 时必填；`settlement` 时可选 |
+| record_mode | text | 否 | `CHECK IN ('current','backfill')`；**用户声明**（§10.9.4） |
+| occurred_on | text | 否 | `YYYY-MM-DD`：流水上的当地日期，不做时区换算；API 校验真实日期且不晚于服务器 UTC 日期的次日 |
+| occurred_time | text | 是 | `HH:MM`（当地时间，`CHECK(occurred_time IS NULL OR occurred_time GLOB '[0-2][0-9]:[0-5][0-9]')`，API 校验 00:00–23:59） |
+| posted_on | text | 是 | 入账日；`CHECK(posted_on IS NULL OR posted_on >= occurred_on)` |
+| event_currency | text | 是 | ISO 4217；`GLOB '[A-Z][A-Z][A-Z]'`；不要求是任何账户的币种 |
+| event_amount | integer | 是 | 最小单位正整数（§10.1）；可空边界见 §10.3.1 |
+| event_currency_exponent | integer | 是 | `CHECK BETWEEN 0 AND 4`；`(event_currency IS NULL) = (event_currency_exponent IS NULL)` |
+| merchant_name | text | 是 | 1–80，敏感扫描；仅消费、退款 |
+| merchant_country | text | 是 | 商户所在地，ISO alpha-2；NULL = 未知（Q4）；仅消费、退款 |
+| card_id | text | 是 | `(card_id, user_id)` → cards（NO ACTION）；仅消费、退款 |
+| payment_channel_id | text | 是 | `(payment_channel_id, user_id)` → payment_channels（NO ACTION） |
+| transfer_method | text | 是 | `CHECK IN ('swift','sepa','fps','ach','local_transfer','internal_book','other')`；仅转账；**不参与地域判定** |
+| counterparty_kind | text | 是 | `CHECK IN ('self','third_party')`；仅转账 |
+| counterparty_name | text | 是 | 1–80，敏感扫描 |
+| counterparty_country | text | 是 | 未登记一侧账户的法律法域（定义同 `account_country`，§10.8.1）；ISO alpha-2 |
+| counterparty_institution | text | 是 | 1–80，敏感扫描（自由文本，不引用 institutions） |
+| counterparty_account_hint | text | 是 | 尾号，CHECK 同 `accounts.number_hint` |
+| home_region | text | 否 | **快照**，`GLOB '[A-Z][A-Z]'` |
+| home_region_source | text | 否 | `CHECK IN ('preference_at_save','carried','user_declared','user_corrected')`，规则见 §10.3.2 |
+| merchant_scope | text | 是 | `CHECK IN ('foreign','domestic','unknown')`，§10.8 |
+| transfer_scope | text | 是 | `CHECK IN ('outbound','inbound','foreign_cross_border','foreign_local','domestic_local','domestic_to_unknown','unknown_to_domestic','foreign_to_unknown','unknown_to_foreign')`，§10.8 |
+| foreign_status | text | 否 | `CHECK IN ('foreign','domestic','undetermined')`，§10.8 |
+| classifier_version | integer | 否 | `CHECK(classifier_version >= 1)`；当前仅 1 |
+| created_at | integer | 否 | 该版本的保存时间 |
+
+按类型的 CHECK：
+- 消费、退款：`transfer_method`、`counterparty_*` 全为 NULL；`merchant_scope IS NOT NULL`；`transfer_scope IS NULL`；`event_amount IS NOT NULL`。
+- 转账：`card_id`、`merchant_name`、`merchant_country`、`merchant_scope` 全为 NULL；`transfer_scope IS NOT NULL`；`counterparty_kind = CASE txn_type WHEN 'own_transfer' THEN 'self' ELSE 'third_party' END`。
+- `merchant_scope` 与同一行一致：`merchant_scope IS NULL OR merchant_scope = CASE WHEN merchant_country IS NULL THEN 'unknown' WHEN merchant_country = home_region THEN 'domestic' ELSE 'foreign' END`。
+- `event_amount IS NOT NULL OR txn_type = 'third_party_transfer'`；`event_amount IS NULL OR event_currency IS NOT NULL`。
+
+索引：`UNIQUE(id, user_id)`；`UNIQUE(id, txn_type, user_id)`（Entry 复合外键目标）；`UNIQUE(transaction_id, revision)`；`INDEX(user_id, occurred_on)`；`INDEX(user_id, card_id)`；`INDEX(user_id, payment_channel_id)`。
+
+**不存在的字段**：`notes`（在交易头）、`is_foreign`（已由三态 `foreign_status` 取代）、任何余额、汇率、手续费、换算金额列。
+
+#### 10.3.1 Event 金额的含义与可空边界
+
+| 类型 | `event_currency` / `event_amount` 的含义 | 可空 |
+|---|---|---|
+| `merchant_spend` | 商户交易金额与标价币种 | 否 |
+| `merchant_refund` | 商户退款金额与币种 | 否 |
+| `own_transfer` | **汇款凭证 / 指令上标明的汇出本金及其币种**（含汇出方未登记的情况，本人有凭证） | 否 |
+| `third_party_transfer` 汇出 | 同上 | 否 |
+| `third_party_transfer` 汇入 | 对方凭证上的汇出本金；**对方金额未知时 `event_amount` 为 NULL**，币种已知可单独填写（P8） | 是（仅此情形） |
+
+- 转账的 Event 金额从不表示到账额；扣款额只在 `out` Entry（实际扣款总额，可能含费用），到账额只在 `in` Entry。汇出币种可以不同于扣款币种（例如从 HKD 账户电汇 USD）。
+- 系统**不**由 Event 与 Entry 的差额推算汇率或手续费，也不保存这类差额。
+- 可空边界由行级 CHECK（仅第三方汇款）与发布检查 C5（且该版本没有 `out` Entry）共同保证。
+
+#### 10.3.2 `home_region` 快照来源
+
+| 来源 | 允许条件（行级 CHECK） | 取值（插入触发器 `ev_snapshot_source` 校验） |
+|---|---|---|
+| `preference_at_save` | `revision = 1` | = 插入时该用户 `coalesce(user_preferences.home_region, 'CN')` |
+| `user_declared` | `revision = 1 AND record_mode = 'backfill'`（P4） | 用户声明的 ISO 代码；**与当前设置无关**，不比较、不读写 `user_preferences` |
+| `carried` | `revision > 1` | = 上一版本（`revision − 1`）的 `home_region` |
+| `user_corrected` | `revision > 1 AND revision_kind = 'snapshot_correction'`（P5） | 用户显式提交的新值 |
+
+### 10.4 `transaction_entries` Entry
+
+| 字段 | 类型 | 空 | 默认 | 约束 / 说明 |
+|---|---|---|---|---|
+| id | text | 否 | | 主键 |
+| user_id | text | 否 | | → users（CASCADE） |
+| event_id | text | 否 | | `(event_id, txn_type, user_id)` → transaction_events（CASCADE） |
+| txn_type | text | 否 | | 与 Event 一致（由复合外键保证），用于按类型的约束 |
+| direction | text | 否 | | `CHECK IN ('out','in')` |
+| funding_account_id | text | 否 | | `(funding_account_id, user_id)` → accounts（NO ACTION）；`in` 方向时为入账账户（K2） |
+| funding_currency | text | 否 | | `(funding_account_id, user_id, funding_currency)` → account_currencies（NO ACTION）；`out` 为实际扣款币种，`in` 为实际入账币种 |
+| amount | integer | 是 | | 最小单位正整数（§10.1） |
+| amount_status | text | 否 | | `CHECK IN ('confirmed','pending')`；`CHECK((amount IS NULL) = (amount_status = 'pending'))` |
+| currency_exponent | integer | 否 | | `CHECK BETWEEN 0 AND 4` |
+| funding_account_country | text | 否 | | **快照**：该账户的 `account_country`，`GLOB '[A-Z][A-Z]'` |
+| country_source | text | 否 | | `CHECK IN ('account_at_save','carried','user_corrected')`；`CHECK((carried_from_entry_id IS NULL) = (country_source = 'account_at_save'))`：未沿用的 Entry 取保存时账户法域，沿用的 Entry 只能是 `carried` 或 `user_corrected` |
+| currency_status_at_save | text | 否 | | `CHECK IN ('active','closed')`：**保存时**该账户币种的状态（不是交易发生时的状态） |
+| closed_currency_ack | integer | 否 | 0 | `CHECK IN (0,1)`；`CHECK(closed_currency_ack = 0 OR currency_status_at_save = 'closed')` |
+| carried_from_entry_id | text | 是 | | 被沿用的上一版本 Entry；`(carried_from_entry_id, user_id)` → transaction_entries（NO ACTION） |
+| created_at | integer | 否 | | |
+
+按类型的 CHECK：`txn_type <> 'merchant_spend' OR direction = 'out'`；`txn_type <> 'merchant_refund' OR direction = 'in'`。
+索引：`UNIQUE(id, user_id)`；`UNIQUE(event_id, direction)`（每版本至多一出一入）；`UNIQUE(event_id, funding_account_id)`（同一账户不能在同一版本中既出又入，即不做同一账户内换币，D2 / K7）；`UNIQUE(event_id) WHERE txn_type <> 'own_transfer'`（消费、退款、第三方汇款至多一条）；`INDEX(user_id, funding_account_id)`。
+
+### 10.5 `ledger_idempotency_keys` 幂等键（完成结果）
+
+**键行只在写入 batch 的最后一步插入一次，插入时即为完成态，之后不可修改；不存在"已认领、未完成"的状态。**
+
+| 字段 | 类型 | 空 | 约束 / 说明 |
+|---|---|---|---|
+| user_id | text | 否 | → users（CASCADE）；键按用户隔离 |
+| key | text | 否 | `CHECK(length(key) BETWEEN 16 AND 64 AND key NOT GLOB '*[^0-9A-Za-z_-]*')` |
+| operation | text | 否 | `CHECK IN ('transaction.create','transaction.correct','transaction.void')` |
+| request_hash | text | 否 | SHA-256 小写 hex；`CHECK(length(request_hash) = 64 AND request_hash NOT GLOB '*[^0-9a-f]*')` |
+| hash_version | integer | 否 | `CHECK(hash_version >= 1)`；规范化算法版本（API_SPEC §5.0.3） |
+| op_id | text | 否 | 本次请求随机生成的 id |
+| transaction_id | text | 否 | `(transaction_id, user_id)` → transactions（CASCADE） |
+| result_revision | integer | 否 | `CHECK(result_revision >= 1)`：本次操作产生或作用的版本 |
+| result_event_id | text | 否 | `(result_event_id, user_id)` → transaction_events（CASCADE） |
+| audit_id | text | 否 | 本次操作的审计记录 id（`audit_log` 无 `(id, user_id)` 唯一键且须在删除用户后保留，故不设外键；由 §10.10 的断言保证存在） |
+| response_status | integer | 否 | `CHECK IN (200, 201)` |
+| created_at | integer | 否 | |
+| expires_at | integer | 是 | 新建为 NULL（**永久保留**）；更正、作废为 `created_at + 30 天`；`CHECK((operation = 'transaction.create') = (expires_at IS NULL))`；`CHECK(expires_at IS NULL OR expires_at > created_at)` |
+
+主键 `(user_id, key)`；`INDEX(user_id, expires_at)`。
+
+### 10.6 M3 复合外键矩阵
+
+| 子表 | 子列 | 父表（唯一键） | ON DELETE |
+|---|---|---|---|
+| transactions | user_id | users(id) | CASCADE |
+| transaction_events | (transaction_id, txn_type, user_id) | transactions(id, txn_type, user_id) | CASCADE |
+| transaction_events | (card_id, user_id) | cards(id, user_id) | NO ACTION |
+| transaction_events | (payment_channel_id, user_id) | payment_channels(id, user_id) | NO ACTION |
+| transaction_entries | (event_id, txn_type, user_id) | transaction_events(id, txn_type, user_id) | CASCADE |
+| transaction_entries | (funding_account_id, user_id) | accounts(id, user_id) | NO ACTION |
+| transaction_entries | (funding_account_id, user_id, funding_currency) | account_currencies(account_id, user_id, currency) | NO ACTION |
+| transaction_entries | (carried_from_entry_id, user_id) | transaction_entries(id, user_id) | NO ACTION |
+| ledger_idempotency_keys | (transaction_id, user_id) | transactions(id, user_id) | CASCADE |
+| ledger_idempotency_keys | (result_event_id, user_id) | transaction_events(id, user_id) | CASCADE |
+
+每个子表另有 `user_id → users(id) ON DELETE CASCADE`。§4 的约定（NO ACTION 而非 RESTRICT、不用 SET NULL、可选引用为 NULL 时不检查）全部适用；TEST_PLAN U-4、U-5 自动覆盖新表。
+
+### 10.7 不变式与触发器
+
+#### 10.7.1 各类交易的 Entry 不变式
+
+设版本的 `out` / `in` 为对应方向的 Entry，`cp` = `counterparty_country`，n = Entry 条数。
+
+| 类型 | n 与方向 | 对手方 | Event 金额 | 保证方式 |
+|---|---|---|---|---|
+| `merchant_spend` | n = 1，`out` | `counterparty_*` 全 NULL | 必填 | 行级 CHECK（方向）+ `UNIQUE(event_id) WHERE txn_type<>'own_transfer'`（n ≤ 1）+ C2（n ≥ 1） |
+| `merchant_refund` | n = 1，`in` | 同上 | 必填 | 同上 |
+| `third_party_transfer` | n = 1，`out`（汇给他人）或 `in`（他人汇入） | `kind = 'third_party'`；`cp` 可为 NULL（P3，未知） | 汇出必填；汇入可空 | 同上 + C5 |
+| `own_transfer` 两侧已登记 | n = 2，一出一入，两个不同账户 | `kind = 'self'`；`cp`、`counterparty_name`、`counterparty_institution`、`counterparty_account_hint` 全 NULL | 必填 | `UNIQUE(event_id, direction)`、`UNIQUE(event_id, funding_account_id)` + C2 + C3 |
+| `own_transfer` 一侧未登记 | n = 1，`out` 或 `in` | `kind = 'self'`；**`cp` 必填**（未登记的本人账户的法域）；机构名称、尾号可选 | 必填 | C3 |
+
+两侧国家统一定义：**汇出方 F = coalesce(out.funding_account_country, cp)**，**收款方 T = coalesce(in.funding_account_country, cp)**。不同币种的两条 Entry 允许（Q3），不保存汇率。
+
+#### 10.7.2 触发器清单
+
+全部用 `RAISE(ABORT, '<CODE>: …')`，沿用 M2 风格；API 层把错误码映射为 HTTP 错误（API_SPEC §5.1）。
+
+| 触发器 | 表 / 时机 | 条件 | 错误码 |
+|---|---|---|---|
+| `tx_insert_guard` | transactions，BEFORE INSERT | `NEW.current_revision <> 0 OR NEW.status <> 'active' OR NEW.voided_at IS NOT NULL OR NEW.voided_op_id IS NOT NULL OR NEW.void_reason IS NOT NULL`：交易头只能以"未发布、有效、未作废"状态插入（§10.10 S1），不能直接插入已发布或已作废的交易头 | `LEDGER_HEADER_INSERT` |
+| `tx_update_guard` | transactions，BEFORE UPDATE（任何列：不限 `OF`、没有 `WHEN`，每条 UPDATE 都执行） | 只允许三种更新（每种都可同时更新 `updated_at`）：① 只改 `notes`（任何状态，`current_revision` 不变）；② 发布：`OLD.status = 'active'`、`NEW.status = 'active'`、`NEW.current_revision = OLD.current_revision + 1`，其他列不变；③ 作废一次：`OLD.status = 'active'`、`NEW.status = 'voided'`、`current_revision` 不变、写入 `voided_at`、`voided_op_id`（可带 `void_reason`），其他列不变。触发器体以 `SELECT CASE … RAISE(ABORT, …) END` 按以下顺序判定，错误码确定：(1) `id`、`user_id`、`txn_type`、`created_at` 任一改变 → `LEDGER_HEADER_IMMUTABLE`；(2) `OLD.status = 'voided'` 且 `notes`、`updated_at` 以外任一列改变（含重新发布、恢复为 `active`）→ `LEDGER_VOIDED`；(3) 其余不属于 ①②③ 的更新（含版本号跳号、回退、发布与作废同时进行、版本号不变时改状态或作废字段）→ `LEDGER_REVISION_ORDER` | `LEDGER_HEADER_IMMUTABLE` / `LEDGER_VOIDED` / `LEDGER_REVISION_ORDER` |
+| `tx_publish_entry_count` | transactions，BEFORE UPDATE OF current_revision，`WHEN` = `tx_update_guard` 形态 ② 的全部条件（`OLD.status = 'active' AND NEW.status = 'active' AND NEW.current_revision = OLD.current_revision + 1`，且其他受保护列不变）；以下四个发布触发器使用同一 `WHEN` | C2（§10.7.3） | `LEDGER_ENTRY_COUNT` |
+| `tx_publish_own_shape` | 同上 | C3 | `LEDGER_OWN_TRANSFER_SHAPE` |
+| `tx_publish_event_amount` | 同上 | C5 | `LEDGER_EVENT_AMOUNT` |
+| `tx_publish_classification` | 同上 | C6 | `LEDGER_CLASSIFICATION` |
+| `tx_publish_domestic` | 同上 | C7（P2 决策）：新版本 `foreign_status = 'domestic'` | `LEDGER_CONFIRMED_DOMESTIC` |
+| `tx_no_delete` | transactions，BEFORE DELETE | `EXISTS (SELECT 1 FROM users WHERE id = OLD.user_id)` | `LEDGER_NO_DELETE` |
+| `ev_immutable` | transaction_events，BEFORE UPDATE | 无条件 | `LEDGER_IMMUTABLE` |
+| `ev_insert_order` | transaction_events，BEFORE INSERT | 交易头不是该用户的 `active` 交易，或 `NEW.revision <> current_revision + 1` | `LEDGER_REVISION_ORDER` |
+| `ev_snapshot_source` | transaction_events，BEFORE INSERT | `home_region` 与 §10.3.2 的来源取值不符 | `LEDGER_SNAPSHOT_SOURCE` |
+| `ev_kind_guard` | transaction_events，BEFORE INSERT | `revision > 1` 时：`classifier_version` 与上一版本不同（v1 不提供升级）；或 `settlement`、`snapshot_correction` 时以下**事实列**任一与上一版本不同（`IS NOT` 比较）：`record_mode`、`occurred_on`、`occurred_time`、`posted_on`、`event_currency`、`event_amount`、`event_currency_exponent`、`merchant_name`、`merchant_country`、`card_id`、`payment_channel_id`、`transfer_method`、`counterparty_*`，以及（仅 `settlement`）`home_region`。不比较的列：`id`、`revision`、`revision_kind`、`correction_reason`、`home_region_source`、分类列、`created_at` | `LEDGER_REVISION_KIND` |
+| `ev_no_delete` | transaction_events，BEFORE DELETE | 同 `tx_no_delete` | `LEDGER_NO_DELETE` |
+| `en_immutable` | transaction_entries，BEFORE UPDATE | 无条件 | `LEDGER_IMMUTABLE` |
+| `en_insert_open` | transaction_entries，BEFORE INSERT | 所属 Event 不是 `active` 交易的未发布版本（`revision = current_revision + 1`） | `LEDGER_IMMUTABLE` |
+| `en_snapshot_source` | transaction_entries，BEFORE INSERT | `account_at_save` 时 ≠ 插入时 `accounts.account_country`；`carried` 时 ≠ 被沿用 Entry 的值；`carried_from_entry_id` 非空时它不是同一交易上一版本、同账户（`funding_account_id` 相同）的 Entry；`carried_from_entry_id` 为空、但上一版本存在同账户的 Entry（账户未变却未沿用，会以当前账户法域重新取快照；与方向是否改变无关）；`user_corrected` 时所属版本不是 `snapshot_correction` 或 `carried_from_entry_id` 为空；`currency_status_at_save` ≠ 插入时 `account_currencies.status` | `LEDGER_SNAPSHOT_SOURCE` |
+| `en_kind_guard` | transaction_entries，BEFORE INSERT | 所属版本为 `settlement` 或 `snapshot_correction` 时，Entry 必须沿用（`carried_from_entry_id` 非空），并与被沿用 Entry 比较以下**事实列**：`direction`、`funding_account_id`、`funding_currency`、`currency_exponent`，以及 `settlement` 时的 `funding_account_country`、`snapshot_correction` 时的 `amount`、`amount_status`——任一不同即拒绝；`settlement` 的 `amount_status` 只允许不变（此时 `amount` 也须不变）或 pending → confirmed。不比较的列（每次插入时重新取得或记录）：`id`、`created_at`、`country_source`、`currency_status_at_save`、`closed_currency_ack`、`carried_from_entry_id` | `LEDGER_REVISION_KIND` |
+| `en_closed_currency` | transaction_entries，BEFORE INSERT | `currency_status_at_save = 'closed'` 且不满足 §10.9.4 R3 | `LEDGER_CLOSED_CURRENCY` |
+| `en_no_delete` | transaction_entries，BEFORE DELETE | 同 `tx_no_delete` | `LEDGER_NO_DELETE` |
+| `key_immutable` | ledger_idempotency_keys，BEFORE UPDATE | 无条件 | `LEDGER_KEY_IMMUTABLE` |
+| `key_create_no_delete` | ledger_idempotency_keys，BEFORE DELETE | `OLD.expires_at IS NULL AND EXISTS (该用户)` | `LEDGER_NO_DELETE` |
+
+#### 10.7.3 发布检查 C1–C7（`current_revision` 由 r 变为 r+1 时，对版本 r+1 的 Event 与其 Entry）
+
+| 检查 | 内容 |
+|---|---|
+| C1 | `tx_insert_guard`：交易头从 `current_revision = 0`、`active`、无作废信息开始；`tx_update_guard`：只能由 r 到 r+1 且交易为 `active`，不能跳号、回退、在作废后重新发布；C2–C7 的触发器带同一 `WHEN`，只在这种合法发布时执行（版本号未变的 UPDATE 不执行发布检查，但仍受 `tx_update_guard` 约束） |
+| C2 | n ≥ 1；`own_transfer` 时 n ≤ 2（其他类型 n ≤ 1 由部分唯一索引保证） |
+| C3 | `own_transfer`：(n = 2) ⇔ (`cp`、`counterparty_name`、`counterparty_institution`、`counterparty_account_hint` 全为 NULL)；n = 1 ⇒ `cp IS NOT NULL` |
+| C4 | 方向与类型一致、第三方汇款 n = 1：已由行级 CHECK 与部分唯一索引在插入时保证，发布时无需再查 |
+| C5 | `event_amount IS NULL` ⇒ `txn_type = 'third_party_transfer'` 且该版本没有 `out` Entry |
+| C6 | 只读取**已保存**的 Event 快照与 Entry 快照，用 §10.8 的 v1 规则（SQL 实现）重新推导 `transfer_scope`（转账）与 `foreign_status`，与已保存值不同则拒绝；`merchant_scope` 已由行级 CHECK 保证 |
+| C7 | `foreign_status = 'domestic'`（已确认纯境内）一律拒绝，包括事实更正、快照更正后的新版本（P2 决策）；`undetermined` 允许 |
+
+此外，写入链在发布语句的 WHERE 中要求 Entry 条数等于本次请求的条数（§10.10），防止某条 Entry 因条件不满足而未写入。
+
+`settlement`、`snapshot_correction` 的 Entry 与上一版本一一对应，无需单独检查：每条新 Entry 必须沿用上一版本中同账户的 Entry（`en_snapshot_source`）且方向不变（`en_kind_guard`），同方向至多一条（`UNIQUE(event_id, direction)`），对手方字段不变（`ev_kind_guard`）；因此 C2（至少一条）与 C3（本人调拨的条数与对手方字段一致）保证新版本的条数等于上一版本。
+
+### 10.8 地域分类 v1（`classifier_version = 1`）
+
+#### 10.8.1 各侧国家的来源
+
+| 一侧 | 来源 | 定义 |
+|---|---|---|
+| 已登记账户 | Entry 的 `funding_account_country` 快照 | D7：账户开户合同所属金融机构法律实体所在法域 |
+| 未登记的本人账户 / 第三方账户 | Event 的 `counterparty_country` | **与 D7 同义**：该账户开户合同主体所在法域；不是对方的居住地，也不是收款路径 |
+| 商户 | Event 的 `merchant_country` | 商户所在地；可未知 |
+
+**禁止**从以下来源推断任何一侧的地区：收款账户信息（例如 Wise 的 USD 收款信息在美国、香港 FPS 收款信息）、IBAN 国家前缀、SWIFT / BIC 国家代码、`transfer_method`、发卡国家、机构总部、币种、渠道地区、IP 地址。`classify()` 只接受上表三类输入与 `home_region`。
+
+#### 10.8.2 规则
+
+记 H = Event 的 `home_region`。每一侧：`side(c) = c IS NULL → 'unknown'；c = H → 'domestic'；否则 'foreign'`（账户一侧永不为 NULL）。
+
+- **消费 / 退款**：A = 唯一 Entry 的国家，M = `merchant_country`。
+  - `merchant_scope = side(M)`。
+  - `foreign_status`：`A <> H` 或 (`M IS NOT NULL AND M <> H`) → `foreign`；否则 `M IS NULL` → `undetermined`；否则 → `domestic`。
+- **转账**：F、T 见 §10.7.1。
+
+| F | T | `transfer_scope` |
+|---|---|---|
+| = H | = H | `domestic_local` |
+| ≠ H | = F | `foreign_local`（境外本地调拨） |
+| = H | ≠ H | `outbound` |
+| ≠ H | = H | `inbound` |
+| ≠ H | ≠ H 且 ≠ F | `foreign_cross_border` |
+| = H | NULL | `domestic_to_unknown` |
+| ≠ H | NULL | `foreign_to_unknown` |
+| NULL | = H | `unknown_to_domestic` |
+| NULL | ≠ H | `unknown_to_foreign` |
+
+  - `foreign_status`：任一已知侧 ≠ H → `foreign`；两侧均已知且均 = H → `domestic`；否则 → `undetermined`。F、T 不会同时为 NULL（至少一条 Entry）；本人汇款的 `cp` 必填，故本人汇款不会是 `undetermined`。
+- **三态的含义**：`foreign` = 已确认境外；`domestic` = 已确认纯境内（C7 拒绝发布，不会存在于已发布版本）；`undetermined` = 信息不足，**不等于境内**。
+- **SQL 写法**：必须写 `c IS NOT NULL AND c <> H`，不得只写 `c <> H`（NULL 比较结果为 NULL，会把未知当成"否"）。TS 与 SQL 两套实现须在全部组合（含 NULL）上一致（TEST_PLAN REG-2）。
+- 分类在保存时由服务端计算并写入；C6 在发布时以已保存的快照验证。之后**不重算**：修改设置、账户地区或分类代码都不会改变已发布版本；新版本沿用上一版本的 `classifier_version`，将来引入新分类版本时，升级只能经用户对单笔交易的显式快照更正（具体请求形式届时另行设计；v1 不提供升级操作）。
+
+### 10.9 快照、版本与补录
+
+#### 10.9.1 快照写入
+
+- 快照只在写入 batch 内由 SQL 读取并写入，**从不接受客户端提供**：`home_region` 来自 `users LEFT JOIN user_preferences`（来源 `preference_at_save`）或上一版本（`carried`）；`funding_account_country` 来自 `accounts`（`account_at_save`）或被沿用的 Entry（`carried`）；`currency_status_at_save` 来自 `account_currencies`。例外只有用户显式提供的 `user_declared`（P4）与 `user_corrected`（P5），且来源被记录。
+- 触发器 `ev_snapshot_source`、`en_snapshot_source` 校验每个快照与其声明的来源一致。
+
+#### 10.9.2 版本种类
+
+| 种类 | 可改内容 | 快照与分类 |
+|---|---|---|
+| 备注修正（不建版本） | 交易头 `notes` | 不影响 |
+| `settlement` 补录金额 | 仅把 pending Entry 改为 confirmed 金额；其余全部沿用（`ev_kind_guard`、`en_kind_guard`） | 全部沿用；C6 仍验证 |
+| `fact_correction` 事实更正 | Event 与 Entry 的任何事实（日期、金额、币种、账户、卡、渠道、商户、对手方、转账方式、`record_mode`）；类型不可改 | 同账户的 Entry（不论方向是否改变）沿用快照（`carried_from_entry_id`）；新账户取保存时值；`home_region` 沿用；分类按已保存快照、以上一版本的 `classifier_version` 推导 |
+| `snapshot_correction` 快照更正（P5） | 仅 `home_region` 和 / 或各 Entry 的 `funding_account_country`；事实全部沿用；逐笔；原因必填 | 来源记为 `user_corrected`；分类重新推导 |
+
+- 修改设置、修改账户 `account_country`、结束或删除关联、修改分类代码，**都不会**生成新版本或改变已发布版本（自动重分类禁止，§3.0）。快照更正不提供批量操作。
+- 每个版本以 `baseRevision` 乐观并发：只能基于当前版本生成下一版本。作废为终态；类型录错时作废后新建。
+
+#### 10.9.3 沿用规则
+
+事实更正与快照更正中，新 Entry 与上一版本中**同一 `funding_account_id`** 的 Entry 对应（每个版本中一个账户至多一条 Entry，`UNIQUE(event_id, funding_account_id)`；方向改变不影响对应），由服务端设置 `carried_from_entry_id`；对应关系由 `en_snapshot_source` 校验。补录金额与快照更正的每条 Entry 都必须是沿用的。
+
+#### 10.9.4 历史补录与已关闭币种（P6、P7）
+
+| # | 规则 |
+|---|---|
+| R1 | `record_mode ∈ ('current','backfill')` 是**用户声明**；系统不证实交易确实发生，也不证实发生时账户、币种、银行卡的状态；不按日期强制判定（P6），界面在发生日早于 30 天或所选账户 / 币种非有效状态时提示 |
+| R2 | 扣款币种须是该账户已登记的币种（复合外键）；状态不限 |
+| R3 | 已关闭币种只在以下情形可用：(a) 所属版本 `record_mode = 'backfill'` 且该 Entry `closed_currency_ack = 1`（用户逐条确认）；(b) 沿用：`carried_from_entry_id` 指向的 Entry 为同一账户、同一 `funding_currency`。否则拒绝（`en_closed_currency`）。这是对 PRODUCT_SPEC §6.1 第 5 条的批准例外；`current` 模式的新 Entry 仍须为有效币种 |
+| R4 | 账户上没有登记的币种不能使用；用户可先经 `PUT /accounts/:id/currencies` 添加（可直接以 `closed` 状态添加）。系统只记录"账户有过该币种"，不推断开通或关闭日期 |
+| R5 | `currency_status_at_save` 只表示**保存时**的状态；界面标为"保存时状态"，不得表述为交易时状态。账户、银行卡、渠道任何状态均可用，不保存其状态快照 |
+| R6 | 补录可声明当时的本国地区（`user_declared`，P4）；不声明时取保存时的设置值 |
+| R7 | 补录模式下界面不自动套用默认来源推荐（当前关联不代表历史），只作参考 |
+
+### 10.10 写入链（实施约束）
+
+每次财务写请求生成新的 `O`（op_id）、`E`（新 Event）、各 Entry id、`A`（审计 id），新建另生成 `T`。全部语句在**一个** `db.batch()` 中按顺序执行（libSQL 与 D1 上均为单个事务）。门控 **G** = `NOT EXISTS (SELECT 1 FROM ledger_idempotency_keys WHERE user_id = :u AND key = :k)`。
+
+**新建（create）**
+
+| 步骤 | 语句 | 条件 |
+|---|---|---|
+| S0 | `DELETE FROM ledger_idempotency_keys` 当前用户已过期的更正 / 作废键 | `user_id = :u AND expires_at IS NOT NULL AND expires_at <= :now` |
+| S1 | `INSERT transactions (T, txn_type, status 'active', current_revision 0, notes, …) SELECT … FROM users` | `users.id = :u AND G` |
+| S2 | `INSERT transaction_events (E, T, revision 1, revision_kind 'original', home_region, home_region_source, 分类列, …) SELECT … FROM transactions t JOIN users u LEFT JOIN user_preferences p`（`preference_at_save` 时 `home_region = coalesce(p.home_region, 'CN')`；`user_declared` 时为请求值） | `t.id = T AND t.current_revision = 0` |
+| S3 … S3+n−1 | 每条 Entry：`INSERT transaction_entries SELECT … FROM transaction_events e, accounts a, account_currencies ac`（`funding_account_country = a.account_country`，`currency_status_at_save = ac.status`） | `e.id = E`，`a.id`、`ac` 属于 `:u` |
+| S4 | 发布：`UPDATE transactions SET current_revision = 1, updated_at = :now` | `id = T AND current_revision = 0 AND (SELECT count(*) FROM transaction_entries WHERE event_id = E) = :n`；触发 C1–C7 |
+| S5 | `INSERT audit_log (A, 'transaction.create', {id, eventId, revision}) SELECT … FROM transactions` | `id = T AND current_revision = 1` |
+| S6 | `INSERT ledger_idempotency_keys SELECT :u, :k, 'transaction.create', H, v, O, T, (SELECT current_revision FROM transactions WHERE id = T AND user_id = :u AND status = 'active' AND current_revision = 1), (SELECT id FROM transaction_events WHERE id = E AND transaction_id = T AND revision = 1), (SELECT id FROM audit_log WHERE id = A), 201, :now, NULL` | `G` |
+
+**更正（correct，基于版本 r 生成 r+1；三种版本种类相同）**
+
+| 步骤 | 语句 | 条件 |
+|---|---|---|
+| S0 | 同上 | |
+| S1 | `INSERT transaction_events (E, revision r+1, revision_kind, 沿用或更正的快照, 分类列, …) SELECT … FROM transactions t JOIN transaction_events prev ON prev.transaction_id = t.id AND prev.revision = r` | `t.id = :T AND t.user_id = :u AND t.status = 'active' AND t.current_revision = r AND G` |
+| S2 … | 各 Entry：沿用的从 `prev` 的 Entry 复制快照并设 `carried_from_entry_id`，新账户的从 `accounts` / `account_currencies` 读取 | `e.id = E` |
+| S3 | 发布：`UPDATE transactions SET current_revision = r+1, updated_at = :now` | `id = :T AND current_revision = r AND EXISTS (Event E) AND Entry 数 = :n`；触发 C1–C7 |
+| S4 | 审计 `transaction.correct`（`{id, eventId, revision, kind}`） | `current_revision = r+1 AND EXISTS (Event E)` |
+| S5 | 键行：`result_revision`、`result_event_id`、`audit_id` 的子查询均要求 Event `E` 存在且已发布为 r+1；`response_status = 201`；`expires_at = :now + 30 天` | `G` |
+
+S3–S5 中的 `EXISTS (Event E)` 必不可少：若 r+1 由更早的另一请求生成，本次的 `E` 不存在，这些语句不得把他人的结果算作本次。
+
+**作废（void，基于版本 r）**
+
+| 步骤 | 语句 | 条件 |
+|---|---|---|
+| S0 | 同上 | |
+| S1 | `UPDATE transactions SET status = 'voided', voided_at = :now, void_reason, voided_op_id = O, updated_at = :now` | `id = :T AND user_id = :u AND status = 'active' AND current_revision = r AND G` |
+| S2 | 审计 `transaction.void`（`{id, eventId, revision}`） | `id = :T AND voided_op_id = O` |
+| S3 | 键行：子查询均要求 `voided_op_id = O`；`result_revision` = 当前版本，`result_event_id` = 当前版本的 Event；`response_status = 200`；`expires_at = :now + 30 天` | `G` |
+
+**batch 之后的路由处理**
+
+| 结果 | 处理 |
+|---|---|
+| 已提交，键行 `op_id = O` | 本次成功：以 `result_revision`、`result_event_id` 构建 `TransactionWriteResult`（API_SPEC §5.2，只含不可变数据） |
+| 已提交，键行 `op_id ≠ O` | 键已被先前请求使用：`request_hash` 相同（按键行 `hash_version` 计算）→ 重放该不可变结果；不同 → 409 `IDEMPOTENCY_CONFLICT` |
+| 键行某列 NOT NULL 失败 | 门控通过但操作未完整生效，已整体回滚；重新读取后给出原因：版本过时 → 409 `REVISION_CONFLICT`，已作废 → 409 `TRANSACTION_VOIDED`，不存在 → 404，币种 / 形状 → 400 |
+| `LEDGER_CLASSIFICATION` / `LEDGER_SNAPSHOT_SOURCE` | 预读后快照被并发修改：以新的 `O` 重新预读并重试一次；仍失败 → 409 `CONCURRENT_CHANGE` |
+| 复合外键失败 | 404 |
+| 其他 `LEDGER_*` | 映射为 API_SPEC §5.1 的 400 / 409；不应出现的为 500 |
+
+**保证（实施时不得省略任何一条）**：
+1. 只有最后一步插入键行；键行不可修改（`key_immutable`）——不存在中间状态。
+2. 键行结果列全部 NOT NULL，取值是只在**本 batch 以新 id（T / E / A / O）写入并到达最终状态**的行存在时才非空的子查询。
+3. G 不成立时 S1 不写入，后续语句依赖 S1 写入的新 id 也不写入，最后一步选出 0 行且不报错；此时 batch 只可能提交 S0 的过期清理。
+4. G 成立但任一步未生效时，对应子查询为 NULL → NOT NULL 失败 → 整个 batch 回滚；任一步报错同样整体回滚。
+5. 因此：**键行已提交 ⇔ 交易头、Event、全部 Entry、发布、审计均已完整提交**。同键并发请求由数据库串行执行，后者门控不成立而走重放。
+6. 失败的请求（4xx / 5xx）不保存键，重试时重新执行（数据库未写入任何内容）。
+
+**保留期**：新建键永久保留（随删除用户而级联删除，`key_create_no_delete` 防止其他删除）；更正、作废键保留 30 天，由 S0 在该用户自己的写入 batch 中清理（只删当前用户已过期的更正 / 作废键，随 batch 回滚）。过期后用同一键重试：更正因 `baseRevision` 过时（版本号单调递增）→ 409 `REVISION_CONFLICT`，作废因已是终态 → 409 `TRANSACTION_VOIDED`；**拒绝，不会重复写入**。
+
+### 10.11 删除保护与用户级联
+
+| 层 | 保障 |
+|---|---|
+| L1 业务层 | 没有任何 API 或服务函数删除交易头、Event、Entry 或新建键；作废是唯一的结束方式；静态测试确认对这些表的 `delete(...)` 只出现在 S0 过期键清理中 |
+| L2 数据库 UPDATE | Event、Entry、键表无条件拒绝 UPDATE；交易头只允许 §10.7.2 的三种更新 |
+| L3 数据库 DELETE | 交易头、Event、Entry、新建键：`BEFORE DELETE WHEN EXISTS (users 行)` → `LEDGER_NO_DELETE`；直接删除或经删除交易头引起的级联都被拒绝；与 `PRAGMA foreign_keys` 无关 |
+| L4 用户级联 | 删除用户时 SQLite 先删除 `users` 行，再执行级联；子表触发器执行时用户行已不存在，守卫不成立，级联完整执行（libSQL 已探针验证，D1 待 B1）。Entry 指向账户等的 NO ACTION 外键在语句结束时检查，随用户一并删除后通过。**账本只能随用户一起删除**；v1 无删除用户接口（§4） |
+| L5 主数据保护 | 账户、账户币种、银行卡、支付渠道被**任何版本**（含被取代版本与已作废交易）引用时不可删除：API 409（`IN_USE` / `CURRENCY_IN_USE`，`details.references.transactions`），NO ACTION 外键为最后防线 |
+| L6 审计 | `audit_log` 独立，按 §6.1 在删除用户后保留，只含 id |
+
+边界：能直接操作数据库的人可以删除触发器或删除用户；触发器防的是程序错误与误操作。SQLite 的 `DROP TABLE` 隐式删除不触发触发器——今后任何重建这四张表的迁移都必须单独评审，不得使用 drizzle-kit 默认的"建新表、复制、删除旧表"流程。
+
+**未发布残留与异常恢复**：
+
+- 正常写入：每次财务写入都是 §10.10 的一个原子 `db.batch()`，任一步失败整体回滚；API 路径不会留下未发布的交易头（`current_revision = 0`）、未发布的 Event（`revision > current_revision`）或其 Entry（§10.10 保证 1–5）。
+- 来源与后果：只有绕过写入链的原始 SQL 或数据库层误操作可能留下这类残留。它们对列表、详情与统计不可见；未发布的 Event 占用下一个版本号，该交易之后的更正会因 `UNIQUE(transaction_id, revision)` 或 `ev_insert_order` 失败。
+- 性质：属于**异常数据库状态**。普通 API 不提供删除或修复入口；不可变与删除守卫（L2、L3）**不为恢复能力而放宽**。
+- 检测：TEST_PLAN IMM-9 的不变式查询（只读）可以发现残留。
+- 恢复：只能由受控的离线维护流程执行——停止写入服务 → 备份数据库 → 核对残留行的全部引用关系（幂等键、审计、`carried_from_entry_id`、各外键）→ 执行经审核的修复脚本；若修复必须越过守卫，只能在该维护事务内进行，并在提交前恢复与迁移原文完全一致的约束与触发器定义 → 修复后运行完整性检查（IMM-9、`PRAGMA foreign_key_check`、DB-M3-1 结构一致性）→ 记录维护记录。v1 不开发恢复工具。
+
+### 10.12 统计查询
+
+- 范围：`status = 'active'` 交易的当前版本中 `amount_status = 'confirmed'` 的 Entry；按 `occurred_on` 分期。
+- 精确求和（禁止 `TOTAL()`、`AVG()` 与任何浮点）：
+
+```sql
+SELECT ev.foreign_status, ev.txn_type, en.direction, en.funding_currency, en.currency_exponent, …,
+       CAST(SUM(en.amount / 1000000000) AS TEXT) AS hi,
+       CAST(SUM(en.amount % 1000000000) AS TEXT) AS lo,
+       COUNT(*) AS n
+FROM transactions t
+JOIN transaction_events ev ON ev.transaction_id = t.id AND ev.revision = t.current_revision
+JOIN transaction_entries en ON en.event_id = ev.id
+WHERE t.user_id = :u AND t.status = 'active' AND en.amount_status = 'confirmed' AND …
+GROUP BY …
+```
+
+- 服务端合并：`BigInt(hi) × 10^9 + BigInt(lo)`，以十进制字符串（最小单位）返回。每行 `hi ≤ 999 999`、`lo ≤ 999 999 999`，同组超过 9.2×10⁹ 行 int64 才溢出（代码保留断言 `n < 9×10⁹`）。必须 `CAST AS TEXT`：D1 以 JS number（浮点）返回整数，libSQL 默认亦然。
+- 分组键始终包含 `funding_currency` 与 `currency_exponent`，不跨币种、不跨小数位合并；Event 金额从不参与统计。
+- 账户一侧的境内 / 境外由已保存快照在查询时推导：`en.funding_account_country <> ev.home_region`。
+
+### 10.13 迁移、实施与验证状态
+
+- 迁移 `0002_m3_transactions.sql` 只新建本节四张表、索引与 §10.7.2 的触发器；不修改任何 M1 / M2 表；`0000`、`0001` 保持字节不变。drizzle-kit 生成后手工修正表达式与部分索引、触发器，文件头注明；`migrations-guard`、新的 M3 迁移测试与 U-4 / U-5 覆盖。
+- 同时需要（M3-B2）：`DELETE /accounts/:id`、`PUT /accounts/:id/currencies`、`DELETE /cards/:id`、`DELETE /payment-channels/:id` 的引用检查与外键失败映射加入流水引用（API_SPEC §5.12）。
+- 共享代码（M3-B1，`@xui/ledger-shared`）：枚举、ISO 4217 最小单位表、金额解析与格式化（字符串 / BigInt，不经浮点）、`classify` v1（三态，§10.8）、请求规范化与哈希 v1（API_SPEC §5.0.3）、zod schema 与 DTO 类型。
+- 探针验证状态：
+
+| 机制 | 内存 libSQL | 本地 D1 |
+|---|---|---|
+| `SUM` 溢出报错（9300 行上限金额）、`TOTAL()` 失真、分段求和 + BigInt 精确 | 已验证 | **未验证** |
+| `typeof` 整数 CHECK（拒绝 `78.3`、`0`，接受 `7830.0`） | 已验证 | **未验证** |
+| 部分唯一索引 `WHERE txn_type <> 'own_transfer'`、`UNIQUE(event_id, direction)` | 已验证 | **未验证** |
+| 幂等键字符集 GLOB | 已验证 | **未验证** |
+| 含子查询的发布分类触发器拒绝不一致版本 | 已验证 | **未验证** |
+| 删除守卫与用户级联共存、`foreign_key_check` 为空 | 已验证 | **未验证** |
+| 交易头 INSERT 守卫、UPDATE 守卫（`SELECT CASE … RAISE` 的错误码顺序）、发布触发器的 `WHEN` 条件 | 未验证 | **未验证** |
+| 最后一步 `INSERT … SELECT` 的 NOT NULL 断言（不完整则整体回滚、同键第二次零写入） | 已验证 | **未验证** |
+| 上述写法能否以 drizzle 查询构造器在 D1 batch 中表达；Event 插入语句 ≤ 100 个绑定参数 | 未验证 | **未验证** |

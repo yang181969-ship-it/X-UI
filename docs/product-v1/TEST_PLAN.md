@@ -1,7 +1,8 @@
 # X-UI Product v1 — 测试计划（TEST_PLAN）
 
 > 状态：§1 为 M1 已有测试；**§2 起为 M2 测试设计（M2-A 修订版）；§3.12 的数据库用例、R-2、R-3、R-5、A-12（schema 与服务层）、H-3（数据库层）、D-3 已在 M2-B1 实现**，API 用例尚未实现；**M2-B2.1 已实现机构 API 用例（`institutions.test.ts`：I-1 – I-5、X-1 – X-4、U-1 – U-3 中与机构相关部分、R-1）、敏感扫描单元测试（`sensitive.test.ts`）与机构浏览器测试（`e2e-v1/institutions.spec.ts`）；M2-B2.2 已实现账户 API 用例（`accounts.test.ts`：A-1 – A-12、D-1、D-2（账户币种部分）、D-4、D-7 以及 X-1 – X-4、U-1 – U-3、R-1 中与账户相关部分）、新建账户须为有效机构（已归档 → 409、恢复后成功、他人机构恒为 404、归档与创建竞争）、替换币种在中间步骤失败时完整回滚（币种集合、默认 USD、`updated_at`、关联均不变），后两类在 libSQL 与本地 D1（`accounts-d1.test.ts`）均验证与账户浏览器测试（`e2e-v1/accounts.spec.ts`，独立测试用户）；M2-B2.3 已实现个人设置 API 用例（`settings.test.ts`：H-1 – H-4、H-6、D-6、R-1 中与设置相关部分（H-5 为 M3 规则），同一组用例在 libSQL 与本地 D1 各执行一次）与设置浏览器测试（`e2e-v1/settings.spec.ts`，独立测试用户）；M2-B3 已实现银行卡 API 用例（`cards.test.ts`：C-1 – C-4、C-6、C-7、C-8、X-1 – X-5 以及 U-1 – U-3、R-1 中与银行卡相关部分，另含新建/改挂须为有效机构、归档与创建竞争、改挂机构与归档/删除竞争（卡片各列不变）、储值账户联合创建在卡/账户/币种/关联/审计任一步注入失败时整库不变且重试只生成一套完整记录、审计与卡片写入同事务（创建与删除）、"已提交但未收到响应"时重发的行为（非幂等，生成第二套完整记录）、删除只影响该卡自身的关联与渠道来源、并发删除；同一组用例在 libSQL 与本地 D1 各执行一次）、到期规则单元测试（`expiry.test.ts`）与银行卡浏览器测试（`e2e-v1/cards.spec.ts`，独立测试用户）；C-5 由 `m2-schema.test.ts` 覆盖；M2-B4 已实现关联与推荐 API 用例（`card-links.test.ts`：L-1 – L-11、S-1 – S-13、D-1、D-2，以及 X-1、X-4、U-1、U-2、U-4、R-1 中与关联相关部分；另含 `endedOn` 校验（正常结束、同日结束、早于开始日期被拒且不写入、省略时为当天并按此存储、数据库只约束 `ended_on` 与 `ended` 状态）、`considered` 在三种响应形状中只含本人数据（libSQL 上关闭外键强行写入跨用户关联行验证查询层隔离）、修改用途与重复、按币种范围的默认、到期不影响推荐、`considered` 解释、为非正常状态的卡/账户记录关联、删除/归档不留孤立关联；原子性：创建、设默认、结束、删除在关联 / 审计 / 设置新默认 / 更新 / 删除任一步注入失败时整库不变且旧默认保留；并发：并发设默认与创建默认始终只有一个默认，检查之后被暂停 / 结束 / 改用途 / 删除时旧默认不被清除，创建与币种关闭、卡片删除、重复关联竞争，PATCH 与设默认 / 结束竞争，并发结束与删除各只生效一次且只有一条审计；同一组用例在 libSQL 与本地 D1 各执行一次），30 个变异（逐一移除服务端的状态、归属、币种、排序、日期与审计条件，以及推荐查询的用户限定）均被测试发现，与关联浏览器测试（`e2e-v1/card-links.spec.ts`，独立测试用户）；M2-B5 已实现支付渠道与来源 API 用例（`channels.test.ts`：P-1 – P-6，以及 X-1、X-2、X-4、U-1 – U-4、I-4、A-10、D-4、R-1 中与渠道相关部分；另含名称唯一（规范化、含已归档、另一用户同名不影响 `existingId`）、余额账户仅限支付服务与 PATCH 合并检查、余额账户状态不限制、服务机构须为有效机构（创建与更换，保留已归档的不检查）、有账户来源（含已结束）的渠道不能改为设备钱包、来源的结束 / 重新添加 / 删除与历史、已结束来源设默认或再次结束 → 409 `LINK_STATE`、归档不改变来源且不阻止管理；隔离：他人的余额账户（正被其渠道使用或未使用）、机构、银行卡、账户一律 404 而非 409，libSQL 上关闭外键强行写入跨用户来源行验证详情只描述本人数据；原子性：来源写入、设置新默认、结束、删除、审计写入、渠道删除及其级联在任一步注入失败时整库不变且旧默认保留；并发：并发设默认与默认创建始终只有一个默认，检查之后被结束 / 删除时旧默认不被清除，来源创建与银行卡 / 账户 / 渠道删除、渠道改为设备钱包、重复来源、渠道归档竞争，渠道修改与余额账户被删除 / 改类型 / 被占用、服务机构被归档 / 删除、渠道被删除、账户来源被添加、余额账户被设置竞争，并发占用同一余额账户、添加同一来源、结束、删除来源与删除渠道各只生效一次且只有一条 `channel.delete` 审计；同一组用例在 libSQL 与本地 D1 各执行一次），变异验证结果见 M2-B5 报告，与支付渠道浏览器测试（`e2e-v1/channels.spec.ts`，独立测试用户）**。
-> 相关文档：[PRODUCT_SPEC.md](PRODUCT_SPEC.md) · [DATA_MODEL.md](DATA_MODEL.md) · [API_SPEC.md](API_SPEC.md)
+> **§5 为 M3 定稿测试矩阵**（P1–P9 已获用户批准，见 [M3_DECISIONS.md](M3_DECISIONS.md)），尚未实现：M3-B1 实现 §5.2 – §5.14 中的共享函数与数据库层用例，其余随 M3-B2 – B5 实现。
+> 相关文档：[PRODUCT_SPEC.md](PRODUCT_SPEC.md) · [DATA_MODEL.md](DATA_MODEL.md) · [API_SPEC.md](API_SPEC.md) · [M3_DECISIONS.md](M3_DECISIONS.md)
 
 ## 0. 运行方式与准入标准
 
@@ -216,9 +217,13 @@ M2-B 完成标准：
 
 ## 5. M3 测试要求（Event / Entry 与历史完整性，届时实现）
 
+依据 PRODUCT_SPEC §7、DATA_MODEL §10、API_SPEC §5。§5.1 是 M2 时期定义的 M3-1 – M3-11，全部保留（按定稿模型补充的断言以"定稿："标出）；§5.2 起为定稿新增矩阵。凡标注"双环境"的用例由 `describe.each([libsql, d1])` 在本地 libSQL 与本地 D1（workerd，`persist: false`、`remoteBindings: false`）各执行一次，**不连接远程 D1**。
+
+### 5.1 M3-1 – M3-11（M2 时期定义，保留）
+
 | ID | 场景 | 断言 |
 |---|---|---|
-| M3-1 | 快照写入 | Event 保存 `event_currency`、`event_amount`、`card_id`、`payment_channel_id`、`home_region`（保存时用户设置的值，无记录时为 `CN`）；Entry 保存 `funding_account_id`、`funding_currency`、`amount`、`funding_account_country` |
+| M3-1 | 快照写入 | Event 保存 `event_currency`、`event_amount`、`card_id`、`payment_channel_id`、`home_region`（保存时用户设置的值，无记录时为 `CN`）；Entry 保存 `funding_account_id`、`funding_currency`、`amount`、`funding_account_country`。定稿：另保存 `home_region_source = 'preference_at_save'`、`country_source = 'account_at_save'`、`currency_status_at_save`；补录声明的本国地区见 HRD |
 | M3-2 | 修改账户国家 | 之后历史流水的 `funding_account_country` 与统计结果不变 |
 | M3-3 | 修改 `home_region` | 修改后已有 Event 的 `home_region` 快照逐行不变；历史流水的境外判断与统计不变（只读快照，不用当前 `home_region` 重新解释）；修改后新建的流水使用新值 |
 | M3-4 | 结束/删除关联 | 历史流水的资金账户、银行卡、渠道与统计不变 |
@@ -227,5 +232,197 @@ M2-B 完成标准：
 | M3-7 | 不重复统计 | PayPal 余额付款与 PayPal 绑卡付款分别只计入一个资金账户；Event 金额不另行计入统计 |
 | M3-8 | 跨币种扣款 | Wise 卡 10 USD、从 HKD 扣款：Event = 10.00 USD；Entry = Wise 账户 · HKD · 用户填写的 HKD 金额；按币种统计时只在 HKD 下计入该金额，USD 下不计入 |
 | M3-9 | 不自动换算 | 跨币种 Entry 不填金额时为 `pending`，系统不估算、不保存汇率或手续费，不计入金额统计并出现在待补录列表；补录后计入 |
-| M3-10 | 扣款币种必须选择 | 推荐为 `conversion_required` 时，未选择 `funding_currency` 不能保存；所选币种不是该账户的 active 币种 → 400 |
+| M3-10 | 扣款币种必须选择 | 推荐为 `conversion_required` 时，未选择 `funding_currency` 不能保存；所选币种不是该账户的 active 币种 → 400。定稿（P7 例外）：本断言适用于 `recordMode = 'current'` 的新 Entry；历史补录经逐条确认、或更正时沿用原有 Entry 的已关闭币种允许，见 BF |
 | M3-11 | 同币种预填 | 推荐为 `exact_currency` 时扣款金额预填为原始金额，可修改，两者分别保存 |
+
+### 5.2 金额与币种小数位（AMT）
+
+| ID | 场景 | 断言 |
+|---|---|---|
+| AMT-1 | 最小单位表 | `@xui/ledger-shared` 的 ISO 4217 小数位表覆盖 `CURRENCY_CODES` 全部 155 个代码，来源与计数固定（同 `iso.ts` 的 SIX List One）；代表值 JPY / KRW / VND / CLP / ISK = 0，USD / HKD / EUR = 2，BHD / KWD / JOD / OMR / TND = 3 |
+| AMT-2 | 解析 | `"78.30"` HKD → 7830；`"1000"` JPY → 1000；`"1.234"` BHD → 1234；小数位多于规定（`"1.5"` JPY、`"1.001"` USD）、负数、`0`、科学计数法、空白、千分位、全角数字 → 拒绝；全程字符串 / BigInt，与浮点无关（属性测试：随机整数格式化后再解析得到原值） |
+| AMT-3 | 格式化 | 按小数位格式化最小单位整数与十进制字符串（含超过 2^53 的汇总值） |
+| AMT-4 | API 边界 | `amount` / `eventAmount` 为 1 与 999 999 999 999 999 → 成功；0、−1、1e15、`78.3`、`"100"`（字符串）→ 400 `VALIDATION` |
+| AMT-5 | 数据库边界（双环境） | 原始 SQL 写入 `0`、负数、`78.3`、超上限 → CHECK 失败；`7830.0` 存为 integer；`typeof` 检查确实生效 |
+| AMT-6 | 小数位快照 | Entry 与 Event 保存 `currency_exponent` / `event_currency_exponent`，等于写入时表中的值；客户端提交小数位 → 400 |
+| AMT-7 | Event 金额含义与可空（P8） | 消费、退款、本人调拨、第三方汇出缺少 `eventAmount` → 400 `ENTRY_SHAPE`；第三方汇入（唯一 Entry 为 `in`）可为 `null`（币种可单独填写）；原始 SQL：Event 金额为空却有 `out` Entry 的版本发布 → `LEDGER_EVENT_AMOUNT` |
+| AMT-8 | 跨币种不推算 | 汇出 USD、扣款 HKD、到账 USD 的本人调拨三个金额分别保存；响应、数据库与页面中没有汇率、手续费或差额字段 |
+
+### 5.3 Event / Entry 形状（SHP，API 与双环境原始 SQL）
+
+| ID | 场景 | 断言 |
+|---|---|---|
+| SHP-1 | 消费 | 1 条 `out` 成功；0 条、2 条、`in` → 400 `ENTRY_SHAPE`；原始 SQL 第二条 Entry → 唯一索引失败，`in` → CHECK 失败 |
+| SHP-2 | 退款 | 1 条 `in` 成功；`out` → 400 / CHECK 失败 |
+| SHP-3 | 第三方 | 1 条 `out` 或 `in` 成功；2 条 → 400 / 唯一索引失败；`counterparty_kind = 'third_party'` |
+| SHP-4 | 本人调拨两侧已登记 | 一出一入、不同账户成功；带 `counterparty` → 400 / 发布 `LEDGER_OWN_TRANSFER_SHAPE`；同一账户既出又入 → 400 / 唯一索引失败（不做同一账户内换币）；两条同方向 → 唯一索引失败；第三条 → `LEDGER_ENTRY_COUNT` |
+| SHP-5 | 本人调拨一侧未登记 | 1 条 + `counterparty.country` 成功；缺 `counterparty.country` → 400 / `LEDGER_OWN_TRANSFER_SHAPE` |
+| SHP-6 | 类型专属字段 | 转账带 `cardId` / 商户字段、消费带 `transferMethod` / `counterparty` → 400 / CHECK 失败；`counterparty_kind` 与类型不符 → CHECK 失败 |
+| SHP-7 | 零 Entry 发布 | 原始 SQL 发布没有 Entry 的版本 → `LEDGER_ENTRY_COUNT` |
+| SHP-8 | 跨币种本人调拨（Q3） | HKD 账户 → USD 账户成功，两侧各自金额，不要求相等 |
+
+### 5.4 地域三态（REG）
+
+| ID | 场景 | 断言 |
+|---|---|---|
+| REG-1 | 三态真值表 | `classify` v1 对消费（账户 = / ≠ H × 商户 = H / ≠ H / 未知）与转账（F、T 各为 = H / ≠ H / 未知，且 F = T / F ≠ T）的全部组合给出 DATA_MODEL §10.8 的 `merchant_scope`、`transfer_scope`、`foreign_status`；HK、MO、TW 独立 |
+| REG-2 | TS 与 SQL 一致（双环境） | 对 REG-1 的每个组合构造已保存版本，发布触发器（SQL）接受 TS 计算的值、拒绝任何其他值（`LEDGER_CLASSIFICATION`）；含 NULL 的组合逐一覆盖 |
+| REG-3 | 未知 ≠ 境内 | 境内账户 + 未知商户、本国账户 → 法域未知的第三方 → `undetermined`，保存成功；列表 `foreignStatus=domestic` 不含它们；统计中只出现在 `undetermined` 块 |
+| REG-4 | 纯境内拒绝（P2） | 境内账户 + 境内商户、两侧均为 H 的本人调拨 → 400 `CONFIRMED_DOMESTIC`，无任何写入；原始 SQL 发布 → `LEDGER_CONFIRMED_DOMESTIC` |
+| REG-5 | 更正后纯境内 | 事实更正或快照更正使新版本成为已确认纯境内 → 400 `CONFIRMED_DOMESTIC`，`details.suggestion = 'void'`，原版本不变 |
+| REG-6 | 法律法域而非收款路径 | Wise（`account_country = BE`）HKD 余额经 FPS 从香港账户转入 → `foreign_cross_border`（HK → BE）；请求中出现 IBAN、BIC、收款信息国家等字段 → 400 `VALIDATION`；`transfer_method`、发卡国家、机构总部变化不影响分类 |
+| REG-7 | 不重分类 | 修改 `home_region`、账户 `account_country` 后，已有版本的快照、分类与统计逐行不变（M3-2、M3-3）；之后新建的交易使用新值 |
+| REG-8 | 筛选 | `foreignStatus` 筛选与统计三块互不重叠；不存在"非境外"筛选参数（→ 400） |
+
+### 5.5 用户隔离（ISO）
+
+| ID | 场景 | 断言 |
+|---|---|---|
+| ISO-1 | 读取他人 | 用户 B 对 A 的交易 GET / 版本 / 更正 / 作废 / 备注 → 404，A 不变 |
+| ISO-2 | 引用他人 | B 新建或更正时使用 A 的账户、卡、渠道 → 404（不是 400 / 409）；原始 SQL → 复合外键失败（U-4，双环境） |
+| ISO-3 | 错误不泄露 | 引用 A 的已关闭币种账户、A 的已作废交易、A 正在使用的幂等键 → B 都只得到 404 或与 A 无关的结果；`details` 中不出现 A 的任何 id |
+| ISO-4 | 列表与统计 | B 的列表、统计、筛选（以 A 的 `accountId` 筛选）不含 A 的数据 |
+| ISO-5 | 幂等键命名空间 | A、B 使用相同的 `Idempotency-Key` 各自新建 → 两笔独立交易，互不重放、互不冲突 |
+
+### 5.6 幂等（IDEM）
+
+| ID | 场景 | 断言 |
+|---|---|---|
+| IDEM-1 | 键必填 | 新建、更正、作废缺少键 → 400 `IDEMPOTENCY_KEY_REQUIRED`；长度 15 / 65、含空格或 `.` → 400 `IDEMPOTENCY_KEY_INVALID`；均无写入 |
+| IDEM-2 | 备注不用键 | `PATCH /notes` 不带键成功；带任意键也不被读取，键表不变 |
+| IDEM-3 | 重放确定 | 新建后重复同一请求 → 201、`Idempotency-Replayed: true`，响应体与首次逐字节相同；之后经过更正、作废、备注修改、账户改名再重放，仍逐字节相同（`revision = 1`，`statusAfter = 'active'`），不是当前状态 |
+| IDEM-4 | 更正与作废的重放 | 同上，对更正（201、`revision = r+1`）与作废（200、`statusAfter = 'voided'`） |
+| IDEM-5 | 键冲突 | 同一键、请求内容不同（任一字段、Entry 顺序以外的差异）→ 409 `IDEMPOTENCY_CONFLICT`，`details` 只含本人的 `operation`、`transactionId`，无写入；仅 JSON 键顺序或 Entry 顺序不同 → 视为相同（规范化） |
+| IDEM-6 | 失败不占用键 | 400 / 404 / 409 `REVISION_CONFLICT` / 注入失败后，用同一键修正请求重试 → 正常执行一次 |
+| IDEM-7 | 完成态键行（双环境） | 每条成功写入恰有一条键行，结果列全部非空且指向已发布版本与已存在的审计记录；任何时刻不存在指向未发布版本的键行；原始 SQL `UPDATE` 键行 → `LEDGER_KEY_IMMUTABLE` |
+| IDEM-8 | 保留期 | 测试时钟推进 31 天：新建键仍在并重放；更正、作废键被下一次写入的 S0 删除；之后用原键重试更正 → 409 `REVISION_CONFLICT`、作废 → 409 `TRANSACTION_VOIDED`，无写入；S0 只删除当前用户已过期的更正 / 作废键；原始 SQL 删除新建键 → `LEDGER_NO_DELETE` |
+| IDEM-9 | 哈希版本 | 键行 `hash_version` 与当前算法不同时按键行版本比较（以测试替身注入 v2 验证），不误判冲突 |
+| IDEM-10 | 规范化 | 哈希 v1 对键顺序、Entry 顺序稳定；任一值变化即变化；固定向量测试 |
+
+### 5.7 响应丢失后重试（RTY）
+
+| ID | 场景 | 断言 |
+|---|---|---|
+| RTY-1 | 新建已提交、响应丢失 | 服务端提交后丢弃响应，同键重试 → 重放首次结果；数据库只有一笔交易、一条审计、一条键行 |
+| RTY-2 | 更正已提交、响应丢失 | 同键重试 → 重放；只有一个新版本 |
+| RTY-3 | 作废已提交、响应丢失 | 同键重试 → 重放 200；只有一条 `transaction.void` 审计 |
+| RTY-4 | 未提交 | 写入前失败（注入）后同键重试 → 正常执行一次 |
+
+### 5.8 不可变版本与发布原子性（IMM，双环境）
+
+| ID | 场景 | 断言 |
+|---|---|---|
+| IMM-1 | Event / Entry 不可修改 | 原始 SQL `UPDATE` 任一列 → `LEDGER_IMMUTABLE` |
+| IMM-2 | 交易头更新守卫 | 改 `txn_type` / `user_id` / `created_at` → `LEDGER_HEADER_IMMUTABLE`；版本号跳号或回退 → `LEDGER_REVISION_ORDER`；作废后改状态、版本号、作废字段 → `LEDGER_VOIDED`；作废后改备注 → 成功 |
+| IMM-3 | 版本插入顺序 | 插入 `revision ≠ current + 1` 或向已作废交易插入版本 → `LEDGER_REVISION_ORDER` |
+| IMM-4 | 已发布版本不能追加 Entry | 向 `revision ≤ current` 的版本插入 Entry → `LEDGER_IMMUTABLE` |
+| IMM-5 | 快照来源真实性 | `preference_at_save` / `account_at_save` / `carried` 与实际值不符、`currency_status_at_save` 伪造、`carried_from_entry_id` 指向其他交易 / 非上一版本 / 不同账户、上一版本有同账户的 Entry 却未沿用（事实更正中以 `account_at_save` 重新取快照，包括只改方向的情形）→ `LEDGER_SNAPSHOT_SOURCE`；合法组合（快照更正中 `carried` 或 `user_corrected` 且 `carried_from_entry_id` 非空；事实更正中换账户的 Entry 为 `account_at_save` 且为空）→ 成功；沿用的 Entry 标为 `account_at_save`、或未沿用却标为 `carried` / `user_corrected` → CHECK 失败 |
+| IMM-6 | 版本种类守卫 | `settlement` 改动金额以外的事实、`snapshot_correction` 改动快照以外的事实 → `LEDGER_REVISION_KIND` |
+| IMM-7 | 发布原子性 | 写入链（DATA_MODEL §10.10）每一步缺失（不发布、少一条 Entry、无审计）→ 键行 NOT NULL 失败，整体回滚，交易头、Event、Entry、审计、键行均为 0 行 |
+| IMM-8 | 只读当前版本 | 列表、详情、统计只读取当前版本；被取代版本的 Entry 不计入（M3-7 扩展） |
+| IMM-9 | 未发布残留 | 不变式检查：已提交数据中不存在 `revision > current_revision` 的 Event 或 `current_revision = 0` 的交易头 |
+| IMM-10 | 交易头 INSERT 守卫 | 原始 SQL 插入 `current_revision = 1`、`status = 'voided'`（配齐作废字段）、`voided_at` / `voided_op_id` / `void_reason` 任一非空的交易头 → `LEDGER_HEADER_INSERT`（或先命中的 CHECK），无行写入；`current_revision = 0`、`active`、作废字段为空 → 成功（只是未发布，不可见） |
+| IMM-11 | 发布与 UPDATE 守卫的触发条件 | ① 版本号不变、只改 `notes` → 成功且不执行发布检查（验证方法：测试中临时移除发布触发器，构造一个不满足 C2–C7 的已发布版本后按迁移原文恢复触发器；之后改备注不报 C2–C7 错误）；② 版本号不变、改 `txn_type` / `created_at` → `LEDGER_HEADER_IMMUTABLE`，改 `status` 或作废字段（不符合形态 ③）→ `LEDGER_REVISION_ORDER`；③ r → r+2、r → r−1、r → r（同时改其他受保护列）→ `LEDGER_REVISION_ORDER`；④ 已作废交易 r → r+1 或改回 `active` → `LEDGER_VOIDED`；⑤ 同一 UPDATE 同时发布与作废 → `LEDGER_REVISION_ORDER`；⑥ 合法 r → r+1 → C2–C7 全部执行（各构造一个违规版本得到对应错误码）；以上被拒绝时整行不变 |
+
+### 5.9 历史补录与已关闭币种（BF）
+
+| ID | 场景 | 断言 |
+|---|---|---|
+| BF-1 | 当前交易用已关闭币种 | → 400 `CURRENCY_NOT_ON_ACCOUNT`（`details.status = 'closed'`），无写入（M3-10） |
+| BF-2 | 补录未确认 | `recordMode = 'backfill'`、未带 `closedCurrencyAck` → 400 `CLOSED_CURRENCY_ACK_REQUIRED` |
+| BF-3 | 补录并确认 | 成功；`currency_status_at_save = 'closed'`、`closed_currency_ack = 1`；原始 SQL 写入不满足 R3 的 Entry → `LEDGER_CLOSED_CURRENCY`（双环境） |
+| BF-4 | 沿用 | 币种关闭后对交易做事实更正或补录金额：同账户同币种的 Entry 沿用成功；改为另一已关闭币种（当前模式）→ 400 |
+| BF-5 | 未登记币种 | 账户上没有的币种 → 400；经 `PUT /currencies` 以 `closed` 状态添加后可补录 |
+| BF-6 | 保存时状态 | `currency_status_at_save` 由 SQL 读取；关闭币种后重新开启，已有 Entry 的值不变；DTO 与页面标为"保存时状态" |
+| BF-7 | 不推断历史状态 | 已关闭 / 冻结账户、已过期 / 停用的卡、已归档渠道均可用于补录与当前交易；不要求卡与账户存在关联；补录模式下前端不自动套用推荐 |
+| BF-8 | 用户声明 | `record_mode` 原样保存；不影响分类与统计；可经事实更正修改 |
+
+### 5.10 用户自述历史本国地区（HRD，P4）
+
+| ID | 场景 | 断言 |
+|---|---|---|
+| HRD-1 | 声明 | 补录带 `declaredHomeRegion = HK`（当前设置 CN）→ `home_region = HK`、来源 `user_declared`，按 HK 分类 |
+| HRD-2 | 与设置独立 | 声明前后 `user_preferences` 与 `preferences.home_region` 审计不变；之后修改设置，已声明的快照不变 |
+| HRD-3 | 仅限补录 | `recordMode = 'current'` 带 `declaredHomeRegion` → 400 `VALIDATION`；原始 SQL `user_declared` 用于非补录或 `revision > 1` → CHECK 失败 |
+| HRD-4 | 沿用 | 对声明过的交易做事实更正 → 新版本 `home_region` 相同、来源 `carried` |
+
+### 5.11 版本更正与快照更正（COR）
+
+| ID | 场景 | 断言 |
+|---|---|---|
+| COR-1 | 补录金额 | pending → confirmed 成功，新版本 `settlement`，其余逐字段沿用；对 confirmed Entry 或改动其他字段 → 400 |
+| COR-2 | 事实更正 | 必须有 `reason`；换账户的 Entry 取新账户保存时法域（`account_at_save`）、未换账户的沿用（`carried`，只改方向也沿用）；`home_region` 沿用；与上一版本完全相同 → 400；不能修改 `type` |
+| COR-3 | 快照更正（P5） | 只改 `homeRegion` 和 / 或某方向的 `fundingAccountCountry`，必须有 `reason`；来源 `user_corrected`；分类重新推导；旧版本保留；值与上一版本相同 → 400；不能夹带事实修改；没有批量接口 |
+| COR-4 | 不自动重分类 | 设置、账户法域、关联、推荐变化都不生成新版本（M3-2 – M3-5） |
+| COR-5 | 乐观并发 | `baseRevision` 过时 → 409 `REVISION_CONFLICT`（`details.currentRevision`）；已作废 → 409 `TRANSACTION_VOIDED` |
+| COR-6 | 作废 | 作废后不计入统计，全部版本可读；不能再更正或作废；备注仍可修改 |
+| COR-7 | 备注 | `PATCH /notes` 不生成版本，只修改交易头的 `notes` 与 `updated_at`，不改统计；不出现在 `TransactionWriteResult` 与重放中；不记审计；更正请求带 `notes` → 400 |
+| COR-8 | 版本历史 | `GET /revisions/:n` 返回各版本原样内容；未发布或不存在的版本 → 404 |
+
+### 5.12 删除保护与用户级联（DEL，双环境）
+
+| ID | 场景 | 断言 |
+|---|---|---|
+| DEL-1 | 主数据删除保护 | 被当前版本、被取代版本或已作废交易引用的账户、卡、渠道 → 409 `IN_USE`（`details.references.transactions`）；被引用的币种移除 → 409 `CURRENCY_IN_USE`；原始 SQL 删除 → 外键失败（M3-6、D-5） |
+| DEL-2 | 业务层无删除 | 静态测试：`apps/ledger-api/src` 中对四张 M3 表的删除只出现在 S0 过期键清理；没有删除交易的路由 |
+| DEL-3 | 数据库删除守卫 | 用户存在时原始 SQL 删除交易头、Event、Entry、新建键 → `LEDGER_NO_DELETE`；`PRAGMA foreign_keys = OFF` 时同样拒绝（libSQL） |
+| DEL-4 | 用户级联 | 扩展 D-3：用户 A、B 各有含多个版本、已作废交易与幂等键的完整 M3 数据；删除 A 成功，A 在四张 M3 表中行数为 0，B 不变，`foreign_key_check` 为空，`audit_log` 中 A 的 `transaction.*` 记录保留且只含 id |
+| DEL-5 | 级联与 NO ACTION 共存 | 删除用户时 Entry → 账户 / 币种的 NO ACTION 与 Event → 交易头的 CASCADE 在同一语句中完成 |
+
+### 5.13 精确统计（SUM，双环境）
+
+| ID | 场景 | 断言 |
+|---|---|---|
+| SUM-1 | 溢出基准 | 同组 9300 条上限金额：直接 `SUM(amount)` 报 integer overflow（证明需要分段） |
+| SUM-2 | 分段求和 | 同一数据经 `/summary` 得到与 BigInt 参考值完全相同的十进制字符串（大于 2^53） |
+| SUM-3 | 无浮点 | 静态测试：服务端源码不使用 `TOTAL(`、`AVG(`；汇总值以字符串返回 |
+| SUM-4 | 范围 | 只计 `active` 交易当前版本的 `confirmed` Entry；作废、被取代、pending 不计入；pending 只在 `pending` 中计数 |
+| SUM-5 | 不跨币种 / 小数位 | 不同币种、同币种不同 `currency_exponent`（原始 SQL 构造）分组分开；没有任何合计字段 |
+| SUM-6 | 三块分离 | `foreign`、`undetermined`、`domestic` 互不重叠；消费与退款、汇出与到账分开；Event 金额不参与（M3-7、M3-8） |
+| SUM-7 | 多个本国地区 | 期间内含不同 `home_region` 快照的交易 → `homeRegions` 列出全部，每笔按自身快照归类 |
+
+### 5.14 libSQL 与本地 D1 一致性（DB-M3）
+
+| ID | 用例 | 断言 |
+|---|---|---|
+| DB-M3-0 | 探针（B1 必做，DATA_MODEL §10.13） | 在本地 D1 上逐项确认：`typeof` 整数 CHECK、交易头 INSERT / UPDATE 守卫与发布触发器 `WHEN` 条件（IMM-10、IMM-11）、部分唯一索引、含子查询的发布触发器、删除守卫与用户级联、最后一步 NOT NULL 断言、`CAST(SUM(...) AS TEXT)`、上述写法能以 drizzle 查询构造器在 D1 batch 中表达、Event 插入 ≤ 100 个绑定参数。任何一项不成立 → B1 停止并报告 |
+| DB-M3-1 | 结构一致 | 两个环境的 M3 表、索引（含部分索引条件）、外键、触发器定义一致（`sqlite_master`、`PRAGMA foreign_key_list`）；U-5 矩阵完整性包含 M3 表 |
+| DB-M3-2 | 迁移 | `0002_m3_transactions` 只新建四张表及其索引、触发器；`0000`、`0001` 字节不变；M2 数据库启动后只应用 0002，再次启动应用 0；`migrations-guard` 通过 |
+| DB-M3-3 | 同一用例 | AMT-5、AMT-7（原始 SQL 部分）、SHP、REG-2、REG-4（原始 SQL 部分）、IMM（含 IMM-10、IMM-11）、BF-3、DEL、SUM、IDEM-7、IDEM-8 在两个环境用同一套用例通过；DATA_MODEL §10.7.2 的 21 个触发器每个至少有一条原始 SQL 违规用例在两个环境中执行 |
+
+### 5.15 故障注入（FI，双环境）
+
+沿用 M2 的 `RAISE(ABORT, 'TEST_INJECTED_FAILURE')` 测试触发器。对新建、每种更正与作废，分别在交易头、Event、每条 Entry、发布、审计、键行写入处注入失败：返回 500，整库（含键表与审计）与注入前完全一致；移除注入后用同一键重试只成功一次。
+
+### 5.16 并发（CC，双环境，`interleave` 工具）
+
+| ID | 场景 | 断言 |
+|---|---|---|
+| CC-1 | 同键并发 | 两个相同请求同时提交 → 一个 201、一个重放；一笔交易、一条审计、一条键行 |
+| CC-2 | 同键不同内容并发 | 一个成功、一个 409 `IDEMPOTENCY_CONFLICT` |
+| CC-3 | 更正与更正 / 作废竞争 | 同一 `baseRevision` 只有先提交者成功，另一个 409；版本号连续 |
+| CC-4 | 快照并发修改 | 预读之后账户 `account_country` 或 `home_region` 被修改：发布检查拒绝不一致版本，服务端重试后按新值保存，或 409 `CONCURRENT_CHANGE`；已发布版本的分类始终等于其已保存快照的推导结果 |
+| CC-5 | 与主数据变更竞争 | 新建与删除账户 / 卡 / 渠道、关闭币种竞争：要么交易成功且删除得到 409，要么删除成功且交易得到 404 / 400；不存在悬空引用 |
+| CC-6 | 备注与更正竞争 | 两者互不影响：备注不改变版本，更正不改变备注 |
+
+### 5.17 变异测试（MUT）
+
+逐一移除以下内容，确认对应测试失败：写入语句中的 `user_id` 限定；门控 G；键行结果子查询中的任一条件（`EXISTS (Event E)`、`voided_op_id = O`、`current_revision = r+1`）；发布语句的 Entry 数条件；C1 – C7 每一项；`tx_insert_guard`；发布触发器的 `WHEN` 条件（改为无条件或仅 `OF current_revision`）；`tx_update_guard` 的错误码顺序；Entry 按账户（而非方向 + 账户）沿用的匹配条件；`ev_snapshot_source` / `en_snapshot_source` / `en_closed_currency` / `ev_kind_guard` / `en_kind_guard`；删除守卫；分段求和（改为直接 `SUM`）与 `CAST AS TEXT`；三态中 `IS NOT NULL` 条件（改为只写 `c <> H`）；`TransactionWriteResult` 只含不可变数据的限制；新建键永久保留；S0 的 `user_id` 与 `expires_at` 条件。
+
+### 5.18 浏览器测试（E2E，独立测试用户，临时数据库）
+
+1. 消费：选卡后三种推荐结果的预填（`exact_currency` 预填金额；`conversion_required` 必须选择扣款币种；`no_match` 手选）。
+2. 跨币种待补录 → 待补录列表 → 补录金额 → 统计计入。
+3. 本人调拨（两侧已登记、跨币种；一侧未登记，必须选择对手方法域且无预填）；第三方汇出与汇入（对方金额未知）。
+4. 信息不足：商户国家未知 → 列表与总览显示"信息不足"，不在境内或境外中。
+5. 纯境内：提交被拒，提示不属于境外金融活动；更正为纯境内时提示作废。
+6. 事实更正、快照更正（展示旧值 → 新值及分类变化后确认）、作废；版本历史可查看。
+7. 补录：已关闭币种需逐条确认；"保存时状态"标签；声明当时本国地区。
+8. 响应丢失：拦截路由，在服务端提交后丢弃响应，界面自动以同一键重试 → 只有一笔交易，显示首次结果。
+9. 删除被引用的账户、卡、渠道时提示"被 N 笔流水引用"。
+10. 全页断言：不出现余额、汇率、换算金额或由差额推算的手续费；控制台无错误（除匿名 `/auth/me` 401）。
+
+### 5.19 回归与准入
+
+- 沿用 §0：v1 测试、旧版测试（`npm test`）、旧版与 v1 的 typecheck / lint / build 全部通过；R-1 鉴权遍历自动包含 `/transactions`；旧版数据库与 `.env` 指纹不变；不连接远程 D1。
+- M2 全部既有用例保持通过；A-5、C-5 的"无金额列"扫描仍只针对 M2 表与 M2 DTO（交易金额属于 M3 交易 DTO，API_SPEC §1）。
