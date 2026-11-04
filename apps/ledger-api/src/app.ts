@@ -4,6 +4,7 @@ import { HTTPException } from 'hono/http-exception';
 import { secureHeaders } from 'hono/secure-headers';
 import { csrfGuard, requireAuth } from './auth/middleware.ts';
 import type { AppBindings, Deps } from './env.ts';
+import { errorForLog } from './lib/dbErrors.ts';
 import { accountRoutes } from './routes/accounts.ts';
 import { authRoutes } from './routes/auth.ts';
 import { cardLinkRoutes } from './routes/cardLinks.ts';
@@ -13,6 +14,7 @@ import { institutionRoutes } from './routes/institutions.ts';
 import { settingsRoutes } from './routes/settings.ts';
 import { setupRoutes } from './routes/setup.ts';
 import { EDITION, PRODUCT, systemRoutes } from './routes/system.ts';
+import { transactionRoutes } from './routes/transactions.ts';
 
 export interface AppOptions {
   /** Runtime-specific client IP lookup (socket address on Node, CF-Connecting-IP on Workers). */
@@ -31,6 +33,7 @@ export const PROTECTED_MOUNTS = {
   '/card-links': cardLinkRoutes,
   '/payment-channels': channelRoutes,
   '/payment-channel-sources': channelSourceRoutes,
+  '/transactions': transactionRoutes,
 } as const;
 
 export function createApp(deps: Deps, opts: AppOptions) {
@@ -85,7 +88,8 @@ export function createApp(deps: Deps, opts: AppOptions) {
 
   app.onError((err, c) => {
     if (err instanceof HTTPException) return err.getResponse();
-    console.error('[api] unhandled error', err);
+    // Redacted: never drizzle's SQL text or bound values (user data) — lib/dbErrors.ts.
+    console.error(`[api] unhandled error\n${errorForLog(err)}`);
     return c.json({ error: 'internal error', code: 'INTERNAL' }, 500);
   });
   return app;

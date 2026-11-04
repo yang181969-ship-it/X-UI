@@ -665,7 +665,8 @@ describe('DELETE (A-10, A-11, D-4)', () => {
     const r = await api.del(`/api/accounts/${acc.id}`);
     expect(r.status).toBe(409);
     expect(r.json.code).toBe('IN_USE');
-    expect(r.json.details).toEqual({ references: { balanceOfChannels: 1 }, channels: [{ id: channel, name: expect.any(String), channelType: 'payment_service', status: 'active' }] });
+    // M3-B2: references also count transactions (always present, here 0) — API_SPEC §5.12.
+    expect(r.json.details).toEqual({ references: { balanceOfChannels: 1, transactions: 0 }, channels: [{ id: channel, name: expect.any(String), channelType: 'payment_service', status: 'active' }] });
     expect(await sqlError(exec('DELETE FROM accounts WHERE id = ?', [acc.id]))).toMatch(/FOREIGN KEY/);
     expect((await api.get(`/api/accounts/${acc.id}`)).status).toBe(200);
     expect(await t.db.select().from(auditLog).where(eq(auditLog.action, 'account.delete'))).toHaveLength(0);

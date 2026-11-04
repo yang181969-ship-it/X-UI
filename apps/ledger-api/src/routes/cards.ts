@@ -15,6 +15,7 @@ import {
   type CardListItem,
   type InstitutionSummary,
   type SpendingSourceResult,
+  type TransactionReferencesDetails,
 } from '@xui/ledger-shared';
 import { and, asc, eq, inArray, ne, sql, type SQL } from 'drizzle-orm';
 import { Hono, type Context } from 'hono';
@@ -26,6 +27,7 @@ import { body, fail, notFound, query } from '../lib/http.ts';
 import { newId } from '../lib/id.ts';
 import type { AccountRow } from '../services/accounts.ts';
 import { recommendSpendingSource, type SourceInput } from '../services/cardLinks.ts';
+import { transactionsUsingCard } from '../services/transactionReferences.ts';
 import { cardAuditStatement, cardCreateBatch, cardPatchValues, cardSearchText, type CardRow, type StoredValueRows } from '../services/cards.ts';
 import { accountDto } from './accounts.ts';
 import { accountSummary, channelSummary, institutionSummary, selectLinkDtos, toLinkDto } from './summaries.ts';
@@ -107,7 +109,8 @@ async function requireActiveInstitution(c: C, id: string) {
 const institutionArchived = (institutionId: string): never =>
   fail(409, 'the institution is archived — restore it before adding a card to it', 'INSTITUTION_ARCHIVED', { institutionId });
 
-const inUse = (): never => fail(409, 'the card is still referenced — close it instead', 'IN_USE');
+const inUse = (transactions: number): never =>
+  fail(409, 'the card is referenced by transactions — close it instead', 'IN_USE', { references: { transactions } } satisfies TransactionReferencesDetails);
 
 /** Parse a body with the card-type-aware error code (credit → CARD_TYPE_UNSUPPORTED). */
 async function cardBody<S extends z.ZodType>(c: C, schema: S): Promise<z.infer<S>> {
@@ -366,8 +369,13 @@ export const cardRoutes = new Hono<AppBindings>()
         db.delete(cards).where(ownCard(c, id)).returning({ id: cards.id }),
       ]);
     } catch (err) {
-      // From M3: a transaction referencing the card (NO ACTION) refuses the delete.
-      if (isForeignKeyViolation(err)) inUse();
+      // From M3: a transaction referencing the card (any version, voided ones too; NO ACTION) refuses
+      // the delete, and the audit rolls back with it. Count them; a refusal nothing explains is not
+      // reported as IN_USE (generic 500).
+      if (isForeignKeyViolation(err)) {
+        const transactions = await transactionsUsingCard(db, c.var.user.id, id);
+        if (transactions > 0) inUse(transactions);
+      }
       throw err;
     }
     // Missing, another user's, or deleted by a concurrent request: 404 either way (and no audit).

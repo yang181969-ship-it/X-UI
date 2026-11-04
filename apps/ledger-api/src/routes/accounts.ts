@@ -19,12 +19,12 @@ import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import { accountCardLinks, accountCurrencies, accounts, cards, institutions, paymentChannels, paymentChannelSources } from '../db/schema.ts';
 import type { AppBindings } from '../env.ts';
-import { audit } from '../lib/audit.ts';
 import { isForeignKeyViolation, isTriggerAbort, likeContains, rejectSensitive } from '../lib/guards.ts';
 import { body, fail, notFound, query } from '../lib/http.ts';
 import { newId } from '../lib/id.ts';
 import { cardSummary, channelSummary, institutionSummary, selectLinkDtos, toLinkDto } from './summaries.ts';
-import { accountCreateBatch, accountPatchValues, currencyReplacePlan, currencyRows, type AccountRow as NewAccountRow } from '../services/accounts.ts';
+import { accountAuditStatement, accountCreateBatch, accountPatchValues, currencyReplacePlan, currencyRows, type AccountRow as NewAccountRow } from '../services/accounts.ts';
+import { currenciesUsedByEntries, transactionsUsingAccount } from '../services/transactionReferences.ts';
 
 /**
  * Accounts that hold money (API_SPEC §3.3). Every query is scoped to the signed-in user; another
@@ -106,22 +106,32 @@ const balanceChannels = (c: C, accountId: string): Promise<ChannelSummary[]> =>
     .where(and(eq(paymentChannels.userId, c.var.user.id), eq(paymentChannels.balanceAccountId, accountId)))
     .orderBy(asc(paymentChannels.sort), asc(paymentChannels.nameKey), asc(paymentChannels.id));
 
-/** Which of `currencies` are still referenced by a card link of the account (any link status). */
+/**
+ * Which of `currencies` are still referenced by a card link of the account (any link status) or,
+ * from M3, by an entry of any version of any transaction (voided ones too).
+ */
 async function currenciesInUse(c: C, accountId: string, currencies: string[]): Promise<string[]> {
   if (!currencies.length) return [];
   const rows = await c.var.deps.db
     .selectDistinct({ currency: accountCardLinks.currency })
     .from(accountCardLinks)
     .where(and(eq(accountCardLinks.userId, c.var.user.id), eq(accountCardLinks.accountId, accountId), inArray(accountCardLinks.currency, currencies)));
-  return rows.map((r) => r.currency!).sort();
+  const byEntries = await currenciesUsedByEntries(c.var.deps.db, c.var.user.id, accountId, currencies);
+  return [...new Set([...rows.map((r) => r.currency!), ...byEntries])].sort();
 }
 
 const currencyInUse = (currencies: string[]): never =>
-  fail(409, 'a currency still used by a card link cannot be removed — close it instead', 'CURRENCY_IN_USE', { currencies } satisfies CurrencyInUseDetails);
+  fail(409, 'a currency still used by a card link or a transaction cannot be removed — close it instead', 'CURRENCY_IN_USE', { currencies } satisfies CurrencyInUseDetails);
 
-const accountInUse = (channels: ChannelSummary[]): never =>
-  fail(409, 'the account is the balance account of a payment channel', 'IN_USE', {
-    references: { balanceOfChannels: channels.length },
+/** What keeps the account from being deleted: channels using it as balance account, transactions with an entry on it. */
+async function accountReferences(c: C, accountId: string) {
+  return { channels: await balanceChannels(c, accountId), transactions: await transactionsUsingAccount(c.var.deps.db, c.var.user.id, accountId) };
+}
+const isReferenced = (refs: { channels: ChannelSummary[]; transactions: number }) => refs.channels.length > 0 || refs.transactions > 0;
+
+const accountInUse = ({ channels, transactions }: { channels: ChannelSummary[]; transactions: number }): never =>
+  fail(409, transactions ? 'the account is referenced by transactions — close it instead' : 'the account is the balance account of a payment channel', 'IN_USE', {
+    references: { balanceOfChannels: channels.length, transactions },
     channels,
   } satisfies AccountInUseDetails);
 
@@ -324,10 +334,12 @@ export const accountRoutes = new Hono<AppBindings>()
     try {
       await db.batch(plan.batch);
     } catch (err) {
-      // Referenced between the check and the batch: the NO ACTION key refused the DELETE, nothing changed.
+      // Referenced between the check and the batch (a link or an entry): the NO ACTION key refused
+      // the DELETE and nothing changed. Re-read what references them; a refusal nothing explains
+      // is not reported as CURRENCY_IN_USE (generic 500).
       if (isForeignKeyViolation(err)) {
         const now = await currenciesInUse(c, id, plan.removed);
-        currencyInUse(now.length ? now : plan.removed);
+        if (now.length) currencyInUse(now);
       }
       throw err;
     }
@@ -337,18 +349,30 @@ export const accountRoutes = new Hono<AppBindings>()
   .delete('/:id', async (c) => {
     const id = c.req.param('id');
     const { db } = c.var.deps;
+    const now = c.var.deps.now();
     const [current] = await db.select({ id: accounts.id }).from(accounts).where(ownAccount(c, id));
     if (!current) notFound('account');
-    const channels = await balanceChannels(c, id);
-    if (channels.length) accountInUse(channels);
+    const refs = await accountReferences(c, id);
+    if (isReferenced(refs)) accountInUse(refs);
+    let deleted: { id: string }[];
     try {
-      // Cascades to its currencies, card links and channel sources in the same statement.
-      await db.delete(accounts).where(ownAccount(c, id));
+      // One batch (Q8): the audit record, read from the account row (so only while it exists), then
+      // the delete, which cascades to its currencies, card links and channel sources in the same
+      // statement. A refused delete or a failing audit insert rolls both back.
+      [, deleted] = await db.batch([
+        accountAuditStatement(db, 'account.delete', { id, userId: c.var.user.id }, { id: newId(now), ip: c.var.ip, now }),
+        db.delete(accounts).where(ownAccount(c, id)).returning({ id: accounts.id }),
+      ]);
     } catch (err) {
-      // Made a balance account in between (or, from M3, referenced by an entry): NO ACTION refuses.
-      if (isForeignKeyViolation(err)) accountInUse(await balanceChannels(c, id));
+      // Made a balance account or referenced by a new transaction in between: NO ACTION refuses.
+      // Re-read; a refusal nothing explains is not reported as IN_USE (generic 500).
+      if (isForeignKeyViolation(err)) {
+        const again = await accountReferences(c, id);
+        if (isReferenced(again)) accountInUse(again);
+      }
       throw err;
     }
-    await audit(c, 'account.delete', { id });
+    // Deleted by a concurrent request after the check: 404, and no audit was written.
+    if (!deleted.length) notFound('account');
     return c.json({ ok: true });
   });

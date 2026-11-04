@@ -15,7 +15,8 @@ import { z } from 'zod';
 import { accountCardLinks, accounts, cards } from '../db/schema.ts';
 import type { AppBindings } from '../env.ts';
 import { isForeignKeyViolation, isUniqueViolation, nothingToUpdate, rejectSensitive } from '../lib/guards.ts';
-import { body, errorChain, fail, notFound, optionalBody } from '../lib/http.ts';
+import { dbErrorText } from '../lib/dbErrors.ts';
+import { body, fail, notFound, optionalBody } from '../lib/http.ts';
 import { newId } from '../lib/id.ts';
 import { linkCreateBatch, linkDeleteBatch, linkEndBatch, setDefaultStatements, type LinkRow } from '../services/cardLinks.ts';
 import { selectLinkDtos, toLinkDto } from './summaries.ts';
@@ -67,7 +68,7 @@ const currencyNotOnAccount = (currency: string): never => fail(400, `${currency}
 const invalid = (path: string, message: string): never => fail(400, 'validation failed', 'VALIDATION', [{ code: 'custom', path: [path], message }]);
 
 /** The unique index of unfinished links (card, account, currency scope, role) refused a write. */
-const isOpenDuplicate = (err: unknown) => isUniqueViolation(err) && /account_card_links_open_uq|account_card_links\.card_id/.test(errorChain(err));
+const isOpenDuplicate = (err: unknown) => isUniqueViolation(err) && /account_card_links_open_uq|account_card_links\.card_id/.test(dbErrorText(err));
 
 /** The unfinished link with this card, account, currency scope and role (other than `except`). */
 async function openTwin(c: C, l: { cardId: string; accountId: string; currency: string | null; role: string }, except?: string) {

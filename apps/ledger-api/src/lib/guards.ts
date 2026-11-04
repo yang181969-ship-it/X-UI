@@ -1,5 +1,6 @@
 import { scanSensitive } from '@xui/ledger-shared';
-import { errorChain, fail } from './http.ts';
+import { dbErrorText } from './dbErrors.ts';
+import { fail } from './http.ts';
 
 /** Request guards and database-error checks shared by the M2 routes. */
 
@@ -15,8 +16,9 @@ export const nothingToUpdate = (): never => fail(400, 'nothing to update', 'VALI
 /** LIKE pattern for a literal substring (escape with '\'). */
 export const likeContains = (s: string) => `%${s.replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
 
-// The drivers wrap SQLite's message (libsql and D1 alike), so the whole cause chain is searched.
-export const isUniqueViolation = (err: unknown) => /UNIQUE constraint failed/i.test(errorChain(err));
-export const isForeignKeyViolation = (err: unknown) => /FOREIGN KEY constraint failed/i.test(errorChain(err));
+// Only SQLite's own messages from verified driver errors are read (dbErrors.ts) — never drizzle's
+// wrapper, whose text repeats the bound values (user input): user text can't fake a constraint.
+export const isUniqueViolation = (err: unknown) => /UNIQUE constraint failed/.test(dbErrorText(err));
+export const isForeignKeyViolation = (err: unknown) => /FOREIGN KEY constraint failed/.test(dbErrorText(err));
 /** A RAISE(ABORT, '<code>: …') from one of the M2 triggers. */
-export const isTriggerAbort = (err: unknown, code: string) => new RegExp(`\\b${code}\\b`).test(errorChain(err));
+export const isTriggerAbort = (err: unknown, code: string) => new RegExp(`\\b${code}\\b`).test(dbErrorText(err));

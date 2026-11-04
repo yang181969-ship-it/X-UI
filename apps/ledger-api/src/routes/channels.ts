@@ -11,6 +11,7 @@ import {
   type DuplicateDetails,
   type InstitutionSummary,
   type LinkStateDetails,
+  type TransactionReferencesDetails,
   type PaymentChannelDetail,
   type PaymentChannelDto,
   type PaymentChannelListItem,
@@ -21,9 +22,11 @@ import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import { accounts, cards, institutions, paymentChannels, paymentChannelSources } from '../db/schema.ts';
 import type { AppBindings } from '../env.ts';
-import { errorChain, body, fail, notFound, optionalBody, query } from '../lib/http.ts';
+import { dbErrorText } from '../lib/dbErrors.ts';
+import { body, fail, notFound, optionalBody, query } from '../lib/http.ts';
 import { isForeignKeyViolation, isTriggerAbort, isUniqueViolation, likeContains, nothingToUpdate, rejectSensitive } from '../lib/guards.ts';
 import { newId } from '../lib/id.ts';
+import { transactionsUsingChannel } from '../services/transactionReferences.ts';
 import {
   activeProvider,
   channelDeleteBatch,
@@ -153,13 +156,14 @@ const sourceKind = (): never => fail(400, 'a device wallet can only be funded by
 const institutionArchived = (institutionId: string): never =>
   fail(409, 'the institution is archived — restore it before making it a channel provider', 'INSTITUTION_ARCHIVED', { institutionId });
 const sourceEnded = (): never => fail(409, 'the source has ended — add it again as a new source instead', 'LINK_STATE', { status: 'ended' } satisfies LinkStateDetails);
-const inUse = (): never => fail(409, 'the payment channel is still referenced — archive it instead', 'IN_USE');
+const inUse = (transactions: number): never =>
+  fail(409, 'the payment channel is referenced by transactions — archive it instead', 'IN_USE', { references: { transactions } } satisfies TransactionReferencesDetails);
 
 // SQLite (libsql and D1 alike) names the columns of a plain unique index in its message; the drivers wrap it.
-const isNameDuplicate = (err: unknown) => isUniqueViolation(err) && /payment_channels\.name_key/.test(errorChain(err));
-const isBalanceDuplicate = (err: unknown) => isUniqueViolation(err) && /payment_channels\.balance_account_id/.test(errorChain(err));
-const isSourceDuplicate = (err: unknown) => isUniqueViolation(err) && /payment_channel_sources\.(card_id|account_id)/.test(errorChain(err));
-const isBalanceCheck = (err: unknown) => /payment_channels_balance_ck/.test(errorChain(err));
+const isNameDuplicate = (err: unknown) => isUniqueViolation(err) && /payment_channels\.name_key/.test(dbErrorText(err));
+const isBalanceDuplicate = (err: unknown) => isUniqueViolation(err) && /payment_channels\.balance_account_id/.test(dbErrorText(err));
+const isSourceDuplicate = (err: unknown) => isUniqueViolation(err) && /payment_channel_sources\.(card_id|account_id)/.test(dbErrorText(err));
+const isBalanceCheck = (err: unknown) => /payment_channels_balance_ck/.test(dbErrorText(err));
 
 /** 404 when a provider or balance account named by the request is missing or another user's. */
 async function requireOwnRefs(c: C, refs: { provider: string | null; balanceAccount: string | null }) {
@@ -371,8 +375,13 @@ export const channelRoutes = new Hono<AppBindings>()
     try {
       [, deleted] = await db.batch(channelDeleteBatch(db, { id, userId: c.var.user.id }, { id: newId(now), ip: c.var.ip, now }));
     } catch (err) {
-      // From M3: a transaction referencing the channel (NO ACTION) refuses the delete.
-      if (isForeignKeyViolation(err)) inUse();
+      // From M3: a transaction referencing the channel (any version, voided ones too; NO ACTION)
+      // refuses the delete, and the audit rolls back with it. Count them; a refusal nothing
+      // explains is not reported as IN_USE (generic 500).
+      if (isForeignKeyViolation(err)) {
+        const transactions = await transactionsUsingChannel(db, c.var.user.id, id);
+        if (transactions > 0) inUse(transactions);
+      }
       throw err;
     }
     // Missing, another user's, or deleted by a concurrent request: 404 either way (and no audit).

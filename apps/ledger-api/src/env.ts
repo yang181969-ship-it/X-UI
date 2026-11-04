@@ -1,3 +1,4 @@
+import type { RequestHasher } from '@xui/ledger-shared';
 import type { DB } from './db/client.ts';
 import { base64UrlToBytes } from './lib/encoding.ts';
 import type * as schema from './db/schema.ts';
@@ -35,6 +36,12 @@ export interface Deps {
   now: () => number;
   /** Cheap edge rate limiter (Cloudflare rate limiting binding); false = over the limit. */
   limiter?: (key: string) => Promise<boolean>;
+  /**
+   * Request hashing of the financial writes (API_SPEC §5.0.3): the version new key rows get and the
+   * hasher of every known version. Defaults to REQUEST_HASH_VERSION / REQUEST_HASHERS; tests swap
+   * it to show that a stored key is always compared with its own version (TEST_PLAN IDEM-9).
+   */
+  requestHash?: { version: number; hashers: Readonly<Record<number, RequestHasher>> };
 }
 
 export type AppBindings = {

@@ -1,7 +1,7 @@
 # X-UI Product v1 — API 规格（API_SPEC）
 
 > 状态：§2 为 M1 已实现接口；§3 起为 M2 设计（M2-A 修订版，含 M2-B1 加固）。**§3.2 金融机构已在 M2-B2.1 实现，§3.3 账户已在 M2-B2.2 实现，§3.1 个人设置已在 M2-B2.3 实现，§3.4 银行卡的 CRUD 已在 M2-B3 实现，§3.5 银行卡-账户关联与 §3.4.1 `spending-source` 推荐已在 M2-B4 实现，§3.6 支付渠道及其资金来源已在 M2-B5 实现**（M2 全部接口已实现）。
-> **§5 为 M3 交易接口的定稿规格**（P1–P9 已获用户批准，见 [M3_DECISIONS.md](M3_DECISIONS.md)），尚未实现（M3-B2 起）。
+> **§5 为 M3 交易接口的定稿规格**（P1–P9 已获用户批准，见 [M3_DECISIONS.md](M3_DECISIONS.md)）。**M3-B2 已实现** `POST /transactions`（§5.0、§5.4，路由级幂等）、`GET /transactions`（§5.3）、`GET /transactions/:id`（§5.5）与 §5.12 对 M2 删除接口的影响；`GET /transactions/:id/revisions/:revision`、`POST /transactions/:id/revisions`、`POST /transactions/:id/void`、`PATCH /transactions/:id/notes` 待 M3-B3，`GET /transactions/summary` 待 M3-B5（届时须注册在 `/:id` 之前）。§5.0.3、§5.1、§5.2、§5.3、§5.4、§5.12 已按 M3-B2-A 复审决定（Q1–Q10）在 M3-B2.0 细化：错误判定顺序、数据库错误与 HTTP 错误的边界、受控重试、已关闭币种确认的保存、规范化搜索的分页、删除保护的响应结构；§5.2 的 `card` 摘要在 M3-B2 复审中补列 `cardType`（与共享 `CardSummary` 一致）。
 > 相关文档：[PRODUCT_SPEC.md](PRODUCT_SPEC.md) · [DATA_MODEL.md](DATA_MODEL.md) · [TEST_PLAN.md](TEST_PLAN.md) · [M3_DECISIONS.md](M3_DECISIONS.md)
 
 ## 1. 通用约定
@@ -145,7 +145,7 @@ M2 没有需要 step-up 的操作（不保存 PAN，没有查看卡号接口）�
 - `GET /accounts/:id` 的 `links` 含全部状态（含 `ended`）；`balanceOfChannels` 为以其为余额账户的渠道；`sourceOfChannels` 为以其为有效（`active`）来源的渠道。
 - `PATCH` 经服务层 `accountPatchValues`：空请求体、`institutionId` 等未知字段 → 400 `VALIDATION`；与已存值合并后再检查 `depositKind` 仅限 `bank`、`closedOn ≥ openedOn`（400 `VALIDATION`）；被渠道用作余额账户时改为 `bank` / `other` → 400 `BALANCE_ACCOUNT_KIND`（`details.channels`，触发器为最后防线）。状态在 `active`、`frozen`、`closed` 之间任意切换，不修改币种与关联。
 - `PUT /currencies`：与已存币种比对，batch 顺序为"清除旧默认 → 删除移除的币种 → 逐个更新或插入（新的默认、状态、`sort`）→ 更新 `updated_at`"，任何时刻不会出现两个默认；保留的币种保留 `created_at`。被关联（任何状态，包括 `ended`）引用的币种不能移除 → 409 `CURRENCY_IN_USE`，`details.currencies` 列出这些币种；检查与 batch 之间新增的引用由 NO ACTION 外键拒绝，同样返回 409 且不做任何修改。改为 `closed` 不受影响，关联保留。
-- `DELETE` → 200 `{ ok: true }`，审计 `account.delete` 只记 `{ id }`；被渠道用作余额账户 → 409 `IN_USE`，`details = { references: { balanceOfChannels }, channels: [渠道摘要] }`。
+- `DELETE` → 200 `{ ok: true }`，审计 `account.delete` 只记 `{ id }`；被渠道用作余额账户 → 409 `IN_USE`，`details = { references: { balanceOfChannels }, channels: [渠道摘要] }`。（M3-B2 起：`references` 增加 `transactions`，审计与删除在同一个 batch 中提交，见 §5.12。）
 - 敏感扫描字段：`name`、`notes`、`numberHint`。
 
 ### 3.4 银行卡
@@ -373,7 +373,7 @@ M2 记录以下审计动作（detail 只含 id 与后四位——`card_link.*` �
 #### 5.0.1 认证、隔离与校验
 - 认证、Origin、CSRF 沿用 §1：未登录 401；非 GET 请求缺少 `x-xui-csrf` 或 Origin 不在白名单 → 403；请求体上限 1 MB。
 - 请求体与查询参数一律 zod `.strict()`：未知字段 → 400 `VALIDATION`。服务端字段出现在请求中同样 → 400：`homeRegion`（除新建时的 `declaredHomeRegion` 与快照更正的 `homeRegion`）、`fundingAccountCountry`（除快照更正）、`merchantScope`、`transferScope`、`foreignStatus`、`classifierVersion`、`revision`、`*Exponent`、`countrySource`、`currencyStatusAtSave`、`carriedFromEntryId`、`status`，以及更正请求中的 `type` 与 `notes`。
-- 他人的交易、账户、银行卡、渠道一律 404 `NOT_FOUND`。请求引用的账户、卡、渠道**先确认属于当前用户**，再报告其他错误，不以 400 / 409 暴露他人数据的存在或状态。幂等键按用户隔离：其他用户使用相同的键互不影响。
+- 他人的交易、账户、银行卡、渠道一律 404 `NOT_FOUND`。请求引用的账户、卡、渠道**先确认属于当前用户**，再报告其他依赖数据库数据的错误（币种、状态、分类、版本），不以 400 / 409 暴露他人数据的存在或状态；只依赖请求体本身的错误（`VALIDATION`、`SENSITIVE_DATA`、`ENTRY_SHAPE`、`IDEMPOTENCY_KEY_*`）不涉及任何他人数据，在此之前判定（§5.0.3）。他人的资源与不存在的资源返回相同的状态码与响应体（无 `details`），batch 失败后的重新判定同样如此（DATA_MODEL §10.10）。幂等键按用户隔离：其他用户使用相同的键互不影响。
 - 敏感信息扫描（§1、DATA_MODEL §6，无绕过）：`merchantName`、`counterparty.name`、`counterparty.institution`、`counterparty.accountHint`、`notes`、更正 `reason`、作废 `reason`；命中 → 400 `SENSITIVE_DATA`，`details.fields`，不回显文本。`counterparty.accountHint` 只接受与 `numberHint` 相同的 1–4 位尾号。
 
 #### 5.0.2 金额与日期
@@ -386,11 +386,16 @@ M2 记录以下审计动作（detail 只含 id 与后四位——`card_link.*` �
 - 请求头 `Idempotency-Key`：16–64 个字符，`[0-9A-Za-z_-]`。前端在**打开表单时**用 `crypto.randomUUID()` 生成，同一次提交的所有重试（超时、断网、5xx）使用同一个键；收到成功响应或关闭表单后丢弃。缺少 → 400 `IDEMPOTENCY_KEY_REQUIRED`；格式不合法 → 400 `IDEMPOTENCY_KEY_INVALID`。
 - `PATCH /transactions/:id/notes` 与所有 GET **不使用**幂等键（备注修改重复提交结果相同）；即使带了该请求头也不读取。
 - 请求哈希 v1（`hash_version = 1`）：SHA-256（WebCrypto）小写 hex，输入为 UTF-8 规范化 JSON `{ "v": 1, "operation": …, "transactionId": <路径 id 或 null>, "body": <zod 解析后的请求体> }`：对象键在每一层按字典序排列，`entries` 按方向排序（`out` 在前），无空白，整数按 JSON 整数书写。
-- 处理顺序：认证 → CSRF → 键格式 → 请求体校验与敏感扫描 → 计算哈希 → 查找当前用户的同一键：
+- 处理顺序（M3-B2.0 Q1 细化）：认证 → CSRF → 键格式 → **请求体校验**（JSON 与 zod `.strict()`、敏感扫描、Entry 形状 `ENTRY_SHAPE`、`occurredOn` 不晚于服务器 UTC 日期的次日——这些只依赖请求体与服务器时钟，不读取数据库，在查找键之前判定）→ 计算哈希 → 查找当前用户的同一键：
   - 已存在且哈希相同（按键行的 `hash_version` 计算）→ **重放**：状态码取键行保存的 `response_status`，响应体为由 `result_revision`、`result_event_id` 重建的 `TransactionWriteResult`（只含不可变数据），并加响应头 `Idempotency-Replayed: true`。重放的是**首次成功操作的结果**，不是交易的当前状态：之后的更正、作废、备注修改、账户改名都不影响重放内容。
   - 已存在且哈希不同 → 409 `IDEMPOTENCY_CONFLICT`，`details = { operation, transactionId }`，不写入任何数据。
-  - 不存在 → 归属与预检查 → 写入 batch（DATA_MODEL §10.10，最后一步插入完成态键行）→ 按 DATA_MODEL §10.10 的"batch 之后的路由处理"给出结果。并发的同键请求由数据库串行执行，后执行者成为重放。
+  - 已存在但键行的 `hash_version` 是本服务未知的版本 → 500 `INTERNAL`（通用消息），既不重放也不视为冲突，不写入（Q9）。
+  - 不存在 → 归属检查（§5.0.1，404）→ 依赖数据库的预检查（币种登记与状态、已关闭币种确认、按预读快照计算的三态分类，见 §5.4）→ 写入 batch（DATA_MODEL §10.10，最后一步插入完成态键行）→ 按 DATA_MODEL §10.10 的"batch 之后的路由处理"给出结果。并发的同键请求由数据库串行执行，后执行者成为重放。
+- 因此，同一键已成功使用后再提交一个请求体本身不合法的请求（如 `ENTRY_SHAPE`、`VALIDATION`），得到的是该请求自身的 400，而不是 409 `IDEMPOTENCY_CONFLICT`。
+- 哈希的输入是 zod 解析后的请求体（缺省值已填入），不是原始 JSON，也不是写入数据库的值：例如 `closedCurrencyAck` 按请求体参与哈希，即使对 `active` 币种保存为 `false`（§5.4）。同一请求在服务端受控重试时沿用首次计算的哈希与同一键，不重新计算。
 - 失败的请求（任何 4xx / 5xx）不保存键，用同一键重试会重新执行。
+- 响应丢失与重试：事务已提交但客户端没有收到响应（超时、断网、服务端在提交后无法确认结果而返回 500）时，客户端用同一键重试，经幂等查找得到首次结果的重放；未提交则重新执行。服务端只在 DATA_MODEL §10.10"受控重试"的条件下自行重试一次（同一键、同一哈希，第一次尝试已整体回滚）。
+- 数据库错误（触发器 `LEDGER_*`、外键、CHECK、UNIQUE、NOT NULL）从不出现在响应中；判定规则见 §5.1 与 DATA_MODEL §10.10。
 - 保留期：新建的键永久保留；更正、作废的键保留 30 天。过期后用同一键重试更正或作废，会因版本已变化或已作废得到 409 `REVISION_CONFLICT` / `TRANSACTION_VOIDED`，不会重复写入。
 
 ### 5.1 错误码（M3 新增与扩展）
@@ -400,17 +405,19 @@ M2 记录以下审计动作（detail 只含 id 与后四位——`card_link.*` �
 | `IDEMPOTENCY_KEY_REQUIRED` | 400 | 新建、更正、作废缺少 `Idempotency-Key` |
 | `IDEMPOTENCY_KEY_INVALID` | 400 | 键的长度或字符不合法 |
 | `ENTRY_SHAPE` | 400 | Entry 的数量、方向或账户与交易类型不符；对手方字段与类型或 Entry 数量不符；Event 金额为空但不属于"他人汇入且对方金额未知"（DATA_MODEL §10.7）；`details.rule` |
-| `CURRENCY_NOT_ON_ACCOUNT` | 400 | （扩展）Entry 币种不是该账户已登记的币种；或该币种已关闭，而本次是当前交易且不属于沿用；`details = { direction, currency, status }` |
+| `CURRENCY_NOT_ON_ACCOUNT` | 400 | （扩展）Entry 币种不是该账户已登记的币种；或该币种已关闭，而本次是当前交易且不属于沿用；`details = { direction, currency, status }`，`status` 为该账户币种的当前状态，未登记时为 `null`（Q4） |
 | `CLOSED_CURRENCY_ACK_REQUIRED` | 400 | 历史补录使用已关闭币种，但该 Entry 未带 `closedCurrencyAck: true`；`details.direction` |
 | `CONFIRMED_DOMESTIC` | 400 | 新版本会是已确认纯境内（`foreign_status = 'domestic'`），不予保存；更正与快照更正时 `details.suggestion = 'void'`（提示作废该交易） |
 | `IDEMPOTENCY_CONFLICT` | 409 | 同一键对应不同的请求内容；`details = { operation, transactionId }` |
 | `REVISION_CONFLICT` | 409 | `baseRevision` 不是当前版本；`details.currentRevision` |
 | `TRANSACTION_VOIDED` | 409 | 交易已作废，不能更正或再次作废 |
-| `CONCURRENT_CHANGE` | 409 | 保存过程中所依据的快照（账户法域、本国地区、币种状态）被并发修改，服务端重试一次后仍不一致 |
-| `IN_USE` | 409 | （扩展）账户、银行卡、渠道被流水引用；`details.references.transactions`（§5.12） |
+| `CONCURRENT_CHANGE` | 409 | 保存过程中所依据的快照来源（账户法域、本国地区、币种状态）被并发修改：**仅当**服务端重新读取确认来源值与预读值不同、按 DATA_MODEL §10.10"受控重试"以同一键与同一请求哈希重试一次后，仍再次确认被并发修改时返回；未能确认来源变化的数据库错误不使用本错误码 |
+| `IN_USE` | 409 | （扩展）账户、银行卡、渠道被流水引用；`details.references.transactions`，结构见 §5.12 |
 | `CURRENCY_IN_USE` | 409 | （扩展）账户币种被关联**或流水**引用，不能移除（§5.12） |
 
-沿用：`VALIDATION`、`BAD_JSON`、`SENSITIVE_DATA`、`NOT_FOUND`。数据库触发器错误（`LEDGER_*`）不直接暴露，由服务端映射为上表的错误码；不应出现的映射为 500 `INTERNAL`。
+沿用：`VALIDATION`、`BAD_JSON`、`SENSITIVE_DATA`、`NOT_FOUND`，以及 500 `INTERNAL`（`{ "error": "internal error", "code": "INTERNAL" }`，通用消息，无 `details`）。
+
+数据库错误与 HTTP 错误的边界（M3-B2.0，DATA_MODEL §10.10，TEST_PLAN ISO-6）：数据库错误（触发器 `LEDGER_*`、外键、CHECK、UNIQUE、键行 NOT NULL）只在服务端用于判断原因，**不直接暴露**，响应中不出现 SQL、表名、约束名、触发器文字或任何 id；没有一类数据库错误被整体映射为某个错误码——外键失败不一律为 404，`LEDGER_CLASSIFICATION` / `LEDGER_SNAPSHOT_SOURCE` 不一律为 `CONCURRENT_CHANGE`。batch 失败后按当前用户可见的状态重新判定（他人或不存在 → 404，已作废 → `TRANSACTION_VOIDED`，版本已变 → `REVISION_CONFLICT`，币种未登记 → `CURRENCY_NOT_ON_ACCOUNT`）；`LEDGER_SNAPSHOT_SOURCE` 与其他按服务端构造不可达的守卫错误、不能由重新读取解释的失败、未知的 `hash_version` → 500 `INTERNAL`（Q2、Q9）。
 
 ### 5.2 DTO
 
@@ -456,7 +463,7 @@ type TransactionDto = {
   notes: string | null; createdAt: number; updatedAt: number; voidedAt: number | null; voidReason: string | null;
   event: EventFacts;
   entries: (EntryFacts & { account: { id: string; name: string; accountCountry: string; status: AccountStatus } })[];
-  card: { id: string; name: string; network: CardNetwork; last4: string; status: CardStatus } | null;
+  card: { id: string; name: string; network: CardNetwork; last4: string; cardType: CardType; status: CardStatus } | null;   // = 共享 CardSummary（M3-B2 复审批准加入 cardType）
   paymentChannel: { id: string; name: string; channelType: ChannelType; status: ChannelStatus } | null;
   revisions: { revision: number; revisionKind: EventFacts['revisionKind']; correctionReason: string | null; createdAt: number }[];
 };
@@ -464,7 +471,9 @@ type TransactionDto = {
 
 - `counterparty`：转账时恒为对象（`kind` 由交易类型决定，两侧均已登记的本人调拨其余字段为 null），消费、退款时为 `null`。
 - `TransactionWriteResult` **不含**：备注、账户 / 卡 / 渠道的当前名称、`currentRevision`、当前状态、提示（warnings）。
+- `TransactionDto.card`（及列表项的 `card`）即 `@xui/ledger-shared` 的共享类型 `CardSummary`：恰为 `{ id, name, network, last4, cardType, status }`，`cardType` 为 `CardType`（`'debit' | 'prepaid'`）。`cardType` 是 M3-B2 经 ChatGPT 复审批准的**最小响应契约扩展**（不只是措辞修改）：共享 `CardSummary`（M3-B1 冻结）原本就含此字段，本规格原文漏列。M2 卡片管理接口的响应不变，其他 DTO 不因此扩大。
 - `TransactionDto.entries[].account` 是当前摘要（名称可能已修改），`fundingAccountCountry` 是保存时的快照；界面分别标注。
+- `EntryFacts.closedCurrencyAck` 是保存的值：只有保存时币种为 `closed` 且请求确认时为 `true`；保存时币种为 `active` 时恒为 `false`，即使请求带了 `true`（§5.4，Q3）。它不改变 `currencyStatusAtSave` 的含义（保存时状态，DATA_MODEL §10.9.4 R5）。
 - 列表项为 `TransactionDto` 去掉 `revisions`。
 
 ### 5.3 `GET /transactions`
@@ -472,7 +481,10 @@ type TransactionDto = {
 - 查询参数（均可选，严格校验）：`from`、`to`（`YYYY-MM-DD`，`from ≤ to`，按 `occurredOn`）、`type`、`accountId`、`cardId`、`channelId`、`currency`（任一 Entry 的币种）、`amountStatus`（`pending` | `confirmed`：含该状态 Entry 的交易）、`foreignStatus`（`foreign` | `undetermined` | `domestic` | `all`，缺省 `all`）、`recordMode`（`current` | `backfill`）、`status`（`active` 缺省 | `voided` | `all`）、`q`（规范化后匹配商户名、对手方名称、备注，`%`、`_` 按字面）、`cursor`、`limit`（1–100，缺省 50）。
 - 不提供"非境外"筛选：信息不足既不是境外也不是境内，只能按三态之一筛选。
 - 只返回各交易的**当前版本**；他人的 `accountId` / `cardId` / `channelId` 作为筛选值时结果为空（不报错、不泄露）。
-- 排序：`occurredOn` 降序、`occurredTime` 降序（空值在后）、交易 `createdAt` 降序、`id` 降序；`cursor` 是对该排序键的不透明编码。
+- 排序：`occurredOn` 降序、`occurredTime` 降序（空值在后）、交易 `createdAt` 降序、`id` 降序；`cursor` 是对该排序键的不透明编码。`id` 唯一，排序是全序：排序值相同（同一天、同一时间、同一毫秒创建）的交易也有确定的先后。
+- 分页（keyset）：下一页只返回排序键严格位于 `cursor` 之后的交易；`nextCursor` 是本页**最后一条已返回**交易的排序键，没有更多匹配时为 `null`。`cursor` 无法解码或格式不合法 → 400 `VALIDATION`；`cursor` 只编码排序键，不含用户信息，任何查询都只在当前用户的数据中进行。
+- 规范化搜索 `q`（M3-B2.0 Q6）：匹配值与 `q` 都经 `@xui/ledger-shared` 的 `normalizeNameKey`（NFKC → trim → 合并空白 → 小写）后做子串比较（`%`、`_` 及其他字符均按字面）。数据库中没有规范化列（不新增迁移），由服务端完成：先在数据库中按上述排序键、以其余筛选条件分批读取当前用户的候选交易，在服务端以规范化值过滤，直到得到 `limit + 1` 条匹配或候选读完为止。分页针对**过滤后的匹配结果**：除最后一页外每页恰好 `limit` 条，`nextCursor` 为本页最后一条匹配的排序键（不是最后扫描到的候选）；匹配稀疏时一页可能扫描多批候选，没有匹配时返回 `{ items: [], nextCursor: null }`。
+- 翻页期间数据变化：只保证排序键与筛选结果在翻页期间不变的交易恰好出现一次（不重复、不遗漏）；新增的、排序键位于 `cursor` 之前的交易不会出现在后续页中；排序键或匹配结果在翻页期间改变的交易（例如更正改变发生日期、修改备注改变 `q` 的匹配）可能出现在新位置或不再出现——与无 `q` 时的 keyset 分页语义相同。
 - → 200 `{ items: TransactionListItem[], nextCursor: string | null }`。
 
 ### 5.4 `POST /transactions`
@@ -501,12 +513,23 @@ type TransactionDto = {
 - `counterparty`：转账时为 `{ name?, country?, institution?, accountHint? }`（类型决定 `kind`，请求不提供）；消费、退款时必须为 `null`。`cardId` 只用于消费、退款；`transferMethod` 只用于转账。
 - `eventCurrency` / `eventAmount`：含义见 DATA_MODEL §10.3.1；只有第三方汇款且唯一 Entry 为 `in` 时 `eventAmount` 可为 `null`；有 `eventAmount` 时必须有 `eventCurrency`。
 - 每条 Entry：`amountStatus` 必须显式给出——`pending` 要求 `amount: null`，`confirmed` 要求金额；`currency` 必须是该账户已登记的币种；已关闭币种只在 `recordMode = 'backfill'` 且 `closedCurrencyAck: true` 时允许（P7）。
+- `closedCurrencyAck`（Q3）是使用已关闭币种的**许可**，不是状态事实：币种保存时为 `active` 时，带 `true` 不报错，保存为 `false`（写入语句按保存时状态决定，DATA_MODEL §10.4）；币种保存时为 `closed` 时按上一条与 P7 处理。请求哈希按请求体中的值计算，不因保存值不同而改变（§5.0.3）：同一键重发相同请求（含 `true`）→ 重放；同一键改为 `false` 重发 → 请求体不同，409 `IDEMPOTENCY_CONFLICT`。
 - 账户、卡、渠道的状态不限制（关闭、冻结、过期、归档都可用于记录），也不要求卡与账户之间存在关联。
 - 三态分类由服务端按快照计算；结果为已确认纯境内 → 400 `CONFIRMED_DOMESTIC`（P2）。`undetermined` 照常保存。
 
+判定顺序（同时违反多条时报告第一条；§5.0.1、§5.0.3）：
+1. 401 / 403 / 413（认证、Origin、CSRF、请求体上限）；
+2. 400 `IDEMPOTENCY_KEY_REQUIRED` / `IDEMPOTENCY_KEY_INVALID`；
+3. 400 `BAD_JSON` / `VALIDATION`（含 `occurredOn` 上限）/ `SENSITIVE_DATA` / `ENTRY_SHAPE`；
+4. 幂等查找：重放 201 / 409 `IDEMPOTENCY_CONFLICT` / 500（未知 `hash_version`）；
+5. 404 `NOT_FOUND`：各 Entry 的账户（`out` 在前）→ 银行卡 → 支付渠道，他人的与不存在的相同，无 `details`；
+6. 400 `CURRENCY_NOT_ON_ACCOUNT`（未登记：`status = null`；已关闭且为当前交易：`status = 'closed'`）→ 400 `CLOSED_CURRENCY_ACK_REQUIRED`（补录、已关闭、未确认）；
+7. 400 `CONFIRMED_DOMESTIC`（按预读的本国地区与账户法域计算）；
+8. 写入 batch → 201，或按 DATA_MODEL §10.10"batch 之后的路由处理"（含受控重试）给出 404 / 400 / 409 `CONCURRENT_CHANGE` / 500。
+
 → 201 `TransactionWriteResult`（`operation = 'transaction.create'`，`revision = 1`）。重放时状态码同为 201。
 
-错误：400（上述规则、`VALIDATION`、`SENSITIVE_DATA`、`IDEMPOTENCY_KEY_*`）；404（账户 / 卡 / 渠道不属于当前用户或不存在）；409 `IDEMPOTENCY_CONFLICT`、`CONCURRENT_CHANGE`。
+错误：400（上述规则、`VALIDATION`、`SENSITIVE_DATA`、`IDEMPOTENCY_KEY_*`）；404（账户 / 卡 / 渠道不属于当前用户或不存在）；409 `IDEMPOTENCY_CONFLICT`、`CONCURRENT_CHANGE`；500 `INTERNAL`（通用消息，§5.1）。
 
 ### 5.5 `GET /transactions/:id`
 
@@ -596,10 +619,12 @@ M3 审计动作（与写入在同一 batch，按 DATA_MODEL §10.10；detail 只
 
 ### 5.12 对 M2 接口的影响（M3-B2 实现）
 
-- `DELETE /accounts/:id`：被任何版本的 Entry 引用 → 409 `IN_USE`，`details.references` 增加 `transactions`（引用它的交易数）；检查之后新增的引用由 NO ACTION 外键拒绝，同样 409。
-- `PUT /accounts/:id/currencies`：移除被 Entry 引用的币种 → 409 `CURRENCY_IN_USE`（`details.currencies` 包含这些币种）；改为 `closed` 照常允许。
-- `DELETE /cards/:id`、`DELETE /payment-channels/:id`：被 Event 引用 → 409 `IN_USE`，`details.references.transactions`。
-- 前端删除确认显示"被 N 笔流水引用，只能关闭 / 归档"。M2 的 DTO 不增加金额字段。
+- 引用计数 `transactions` = 当前用户中引用该对象的**不同交易数**，包括所有版本（含被取代的版本）与已作废交易（DATA_MODEL §10.11 L5）。**NO ACTION 外键是最终的引用完整性屏障**：检查之后、删除之前新增的引用使删除语句失败并整体回滚，路由随后重新读取计数并返回同样的 409；API 的预检查只用于给出计数与说明，不提供原子性保证。
+- `DELETE /accounts/:id`：被任何版本的 Entry 引用 → 409 `IN_USE`，`details = { references: { balanceOfChannels, transactions }, channels: [渠道摘要] }`（Q5：两个计数字段始终出现，没有余额渠道时 `balanceOfChannels = 0`、`channels = []`，未被流水引用时 `transactions = 0`）。**成功审计与删除在同一个 `db.batch()` 中提交**（Q8，与 `DELETE /cards/:id` 相同的写法：`INSERT INTO audit_log … SELECT … FROM accounts WHERE id、user_id 匹配`，然后删除）：审计存在当且仅当删除已提交；删除被拒绝（409）、并发删除（404）或审计写入失败都整体回滚，不留下成功审计。成功响应（200 `{ ok: true }`）与审计内容（`account.delete`，`detail = { id }`）不变。本项只改变该删除路径。
+- `PUT /accounts/:id/currencies`：移除被关联**或** Entry 引用的币种 → 409 `CURRENCY_IN_USE`（`details.currencies` 为被关联或 Entry 引用的待移除币种的并集，排序）；改为 `closed` 照常允许。
+- `DELETE /cards/:id`、`DELETE /payment-channels/:id`：被 Event 引用 → 409 `IN_USE`，`details = { references: { transactions } }`（Q5，始终出现）；审计与删除已在同一 batch 中（M2-B3、M2-B5），删除被拒绝时审计一同回滚。
+- 机构、银行卡-账户关联、支付渠道来源的删除不受 M3 影响（流水不直接引用它们）；删除用户的级联规则不变。
+- M2 的 DTO（列表、详情）不增加引用计数或金额字段（Q7）；前端删除确认显示"被 N 笔流水引用，只能关闭 / 归档"依据 409 的 `details`（M3-B4）。
 
 ### 5.13 预填与提示（前端）
 

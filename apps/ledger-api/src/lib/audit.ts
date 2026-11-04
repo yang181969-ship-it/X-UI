@@ -26,7 +26,9 @@ export type AuditAction =
   | 'card_link.end'
   | 'card_link.delete'
   | 'channel.delete'
-  | 'preferences.home_region';
+  | 'preferences.home_region'
+  // M3 (API_SPEC §5.11): written by the financial write chain itself (services/transactionWrite.ts), never by audit().
+  | 'transaction.create';
 
 export async function audit(
   c: Context<AppBindings>,

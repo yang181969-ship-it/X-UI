@@ -325,8 +325,9 @@ describe.each(['libsql', 'd1'] as const)('M3 write chains on %s', (name) => {
      * The chains select every owned parent with user_id = the caller (accounts, account currencies,
      * carried entries, the transaction itself), so a foreign or missing parent writes zero rows and
      * the batch ends in the key-row NOT NULL failure; card / channel ids are bound values checked by
-     * their composite foreign keys. No LEDGER_* trigger ever sees such a row. B2 maps:
-     *   FOREIGN KEY failure → 404; key-row NOT NULL → re-read as the caller → 404 / 409 / 400.
+     * their composite foreign keys. No LEDGER_* trigger ever sees such a row. B2 never maps either
+     * failure by itself (DATA_MODEL §10.10, TEST_PLAN ISO-6 / ISO-7): it re-reads as the caller →
+     * 404 / 409 / 400, and a failure the re-read can't explain is a generic 500.
      */
     const outcome = async (p: Promise<unknown>) => {
       const msg = await rejection(p);

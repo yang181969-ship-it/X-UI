@@ -34,6 +34,7 @@ import type {
   TxnStatus,
   TxnType,
 } from './enums.ts';
+import type { EntryShapeRule } from './transactions.ts';
 
 /**
  * Response shapes of the M2 API (API_SPEC §3). camelCase; dates YYYY-MM-DD, expiry YYYY-MM,
@@ -157,13 +158,22 @@ export interface AccountDetail extends AccountDto {
   sourceOfChannels: ChannelSummary[];
 }
 
-/** details of DELETE /accounts/:id → 409 IN_USE: the channels using the account as their balance account. */
+/**
+ * details of DELETE /accounts/:id → 409 IN_USE: the channels using the account as their balance
+ * account, and (M3, API_SPEC §5.12) how many transactions — any version, voided ones too — have an
+ * entry on it. Both counts are always present.
+ */
 export interface AccountInUseDetails {
-  references: { balanceOfChannels: number };
+  references: { balanceOfChannels: number; transactions: number };
   channels: ChannelSummary[];
 }
 
-/** details of PUT /accounts/:id/currencies → 409 CURRENCY_IN_USE: removed currencies that are still referenced. */
+/** details of DELETE /cards/:id and DELETE /payment-channels/:id → 409 IN_USE (M3, API_SPEC §5.12). */
+export interface TransactionReferencesDetails {
+  references: { transactions: number };
+}
+
+/** details of PUT /accounts/:id/currencies → 409 CURRENCY_IN_USE: removed currencies still referenced by a card link or an entry. */
 export interface CurrencyInUseDetails {
   currencies: string[];
 }
@@ -520,6 +530,26 @@ export interface TransactionSummaryDto {
 export interface IdempotencyConflictDetails {
   operation: IdempotentOperation;
   transactionId: string;
+}
+
+/** details of a 400 ENTRY_SHAPE: the first Entry-shape rule the request breaks (transactionShapeProblem). */
+export interface EntryShapeDetails {
+  rule: EntryShapeRule;
+}
+
+/**
+ * details of a transaction API 400 CURRENCY_NOT_ON_ACCOUNT: the entry's currency is not registered
+ * on its account (status null), or is closed in a current (not backfill) transaction.
+ */
+export interface EntryCurrencyDetails {
+  direction: EntryDirection;
+  currency: string;
+  status: AccountCurrencyStatus | null;
+}
+
+/** details of a 400 CLOSED_CURRENCY_ACK_REQUIRED: the backfill entry that uses a closed currency unacknowledged. */
+export interface ClosedCurrencyAckDetails {
+  direction: EntryDirection;
 }
 
 /** details of a 409 REVISION_CONFLICT. */

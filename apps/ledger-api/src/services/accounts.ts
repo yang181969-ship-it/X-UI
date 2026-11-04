@@ -3,7 +3,8 @@ import { and, eq, getTableColumns, inArray, sql, type SQL } from 'drizzle-orm';
 import type { BatchItem } from 'drizzle-orm/batch';
 import type { z } from 'zod';
 import type { DB } from '../db/client.ts';
-import { accountCurrencies, accounts, cards, institutions, paymentChannels } from '../db/schema.ts';
+import { accountCurrencies, accounts, auditLog, cards, institutions, paymentChannels } from '../db/schema.ts';
+import type { AuditAction } from '../lib/audit.ts';
 
 /**
  * Account service rules. PATCH /accounts/:id goes through accountPatchValues, so the column set it
@@ -15,6 +16,30 @@ import { accountCurrencies, accounts, cards, institutions, paymentChannels } fro
 type Statement = BatchItem<'sqlite'>;
 export type Batch = [Statement, ...Statement[]];
 type CurrencyRow = typeof accountCurrencies.$inferInsert;
+
+/**
+ * INSERT INTO audit_log … SELECT … FROM accounts WHERE (this account, this user) — for DELETE
+ * /accounts/:id (M3-B2-C2, Q8). Placed before the delete in the same batch, it reads the row that
+ * is about to be deleted: written exactly when the account still exists inside that transaction,
+ * rolled back with the delete when the delete is refused or anything else fails. detail is { id },
+ * as before (never the name or other account data).
+ */
+export function accountAuditStatement(db: DB, action: AuditAction, account: { id: string; userId: string }, entry: { id: string; ip: string | null; now: number }) {
+  const row = {
+    id: sql`${entry.id}`.as('id'),
+    userId: sql`${account.userId}`.as('user_id'),
+    action: sql`${action}`.as('action'),
+    detail: sql`json_object('id', ${accounts.id})`.as('detail'),
+    ip: sql`${entry.ip}`.as('ip'),
+    createdAt: sql`${entry.now}`.as('created_at'),
+  } satisfies Record<keyof typeof auditLog.$inferSelect, unknown>;
+  return db.insert(auditLog).select(
+    db
+      .select(row)
+      .from(accounts)
+      .where(and(eq(accounts.id, account.id), eq(accounts.userId, account.userId))),
+  );
+}
 
 /** account_currencies rows for a validated currency list: sort = position in the list. */
 export function currencyRows(accountId: string, userId: string, list: readonly AccountCurrencyInput[], now: number): CurrencyRow[] {
