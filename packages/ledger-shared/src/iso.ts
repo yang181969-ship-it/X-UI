@@ -94,3 +94,26 @@ const CURRENCY_SET: ReadonlySet<string> = new Set(CURRENCY_CODES);
 
 export const isCountryCode = (v: string): v is CountryCode => COUNTRY_SET.has(v);
 export const isCurrencyCode = (v: string): v is CurrencyCode => CURRENCY_SET.has(v);
+
+/**
+ * ISO 4217 minor units (decimal places) of every code in CURRENCY_CODES — the CcyMnrUnts column
+ * of the same SIX List One as above (Pblshd="2026-09-17"). Every circulating currency has 0, 2 or
+ * 3 (the 4-decimal codes, CLF and UYW, are excluded fund codes). M3 stores this value next to each
+ * amount (*_exponent), so a later ISO change never re-scales a saved amount (DATA_MODEL §10.1).
+ */
+const ZERO_DECIMAL_CURRENCIES = ['BIF', 'CLP', 'DJF', 'GNF', 'ISK', 'JPY', 'KMF', 'KRW', 'PYG', 'RWF', 'UGX', 'VND', 'VUV', 'XAF', 'XOF', 'XPF'] as const satisfies readonly CurrencyCode[];
+const THREE_DECIMAL_CURRENCIES = ['BHD', 'IQD', 'JOD', 'KWD', 'LYD', 'OMR', 'TND'] as const satisfies readonly CurrencyCode[];
+
+export type CurrencyExponent = 0 | 1 | 2 | 3 | 4;
+
+export const CURRENCY_EXPONENTS: Readonly<Record<CurrencyCode, CurrencyExponent>> = Object.freeze(
+  Object.fromEntries(
+    CURRENCY_CODES.map((c) => [c, (ZERO_DECIMAL_CURRENCIES as readonly string[]).includes(c) ? 0 : (THREE_DECIMAL_CURRENCIES as readonly string[]).includes(c) ? 3 : 2]),
+  ) as Record<CurrencyCode, CurrencyExponent>,
+);
+
+/** Minor units of a code in CURRENCY_CODES; throws for anything else (callers validate the code first). */
+export function currencyExponent(code: string): CurrencyExponent {
+  if (!isCurrencyCode(code)) throw new RangeError(`not a supported ISO 4217 currency: ${code}`);
+  return CURRENCY_EXPONENTS[code];
+}

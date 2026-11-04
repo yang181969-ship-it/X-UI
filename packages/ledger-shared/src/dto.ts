@@ -2,6 +2,7 @@ import type {
   AccountCurrencyStatus,
   AccountStatus,
   AccountType,
+  AmountStatus,
   CardForm,
   CardLinkRole,
   CardLinkStatus,
@@ -11,12 +12,27 @@ import type {
   ChannelSourceStatus,
   ChannelStatus,
   ChannelType,
+  CounterpartyKind,
+  CountrySource,
+  CurrencyStatusAtSave,
   DepositKind,
+  EntryDirection,
+  ForeignStatus,
+  HomeRegionSource,
+  IdempotentOperation,
   InstitutionStatus,
   InstitutionType,
   LedgerErrorCode,
+  MerchantScope,
   NoMatchReason,
+  RecordMode,
+  RevisionKind,
   SpendingSkipReason,
+  TransactionErrorCode,
+  TransferMethod,
+  TransferScope,
+  TxnStatus,
+  TxnType,
 } from './enums.ts';
 
 /**
@@ -27,7 +43,7 @@ import type {
 
 export interface ErrorBody {
   error: string;
-  code: LedgerErrorCode | (string & {});
+  code: LedgerErrorCode | TransactionErrorCode | (string & {});
   details?: unknown;
 }
 
@@ -334,4 +350,179 @@ export interface ChannelTypeChangeDetails {
 /** details of a 409 DUPLICATE: the existing record (an institution, or the unfinished link with the same card, account, scope and role). */
 export interface DuplicateDetails {
   existingId: string;
+}
+
+// ================================================================== M3 transactions (API_SPEC §5.2)
+//
+// Transaction DTOs carry transaction amounts (K4) — minor-unit integers ≤ 999 999 999 999 999,
+// exact as JSON numbers — and never a balance, exchange rate, fee or converted amount. Sums are
+// decimal strings (money.ts). Field mapping: accountId ↔ funding_account_id, currency ↔
+// funding_currency, fundingAccountCountry ↔ funding_account_country (for an `in` entry: the
+// receiving account and currency, DATA_MODEL §10.4); everything else is the column in camelCase.
+
+export interface CounterpartyFacts {
+  kind: CounterpartyKind;
+  name: string | null;
+  country: string | null;
+  institution: string | null;
+  accountHint: string | null;
+}
+
+/** One saved version of a transaction (an immutable transaction_events row). */
+export interface EventFacts {
+  eventId: string;
+  revision: number;
+  revisionKind: RevisionKind;
+  correctionReason: string | null;
+  recordMode: RecordMode;
+  occurredOn: string;
+  occurredTime: string | null;
+  postedOn: string | null;
+  eventCurrency: string | null;
+  eventAmount: number | null;
+  eventCurrencyExponent: number | null;
+  merchantName: string | null;
+  merchantCountry: string | null;
+  cardId: string | null;
+  paymentChannelId: string | null;
+  transferMethod: TransferMethod | null;
+  /** Always an object for transfers (kind from the type), null for spend / refund. */
+  counterparty: CounterpartyFacts | null;
+  homeRegion: string;
+  homeRegionSource: HomeRegionSource;
+  merchantScope: MerchantScope | null;
+  transferScope: TransferScope | null;
+  foreignStatus: ForeignStatus;
+  classifierVersion: number;
+  createdAt: number;
+}
+
+/** One immutable transaction_entries row. */
+export interface EntryFacts {
+  entryId: string;
+  direction: EntryDirection;
+  accountId: string;
+  currency: string;
+  currencyExponent: number;
+  amount: number | null;
+  amountStatus: AmountStatus;
+  /** Snapshot at save time (or carried / user-corrected) — not the account's current country. */
+  fundingAccountCountry: string;
+  countrySource: CountrySource;
+  /** The currency's status when this entry was saved, not when the transaction happened. */
+  currencyStatusAtSave: CurrencyStatusAtSave;
+  closedCurrencyAck: boolean;
+  carriedFromEntryId: string | null;
+}
+
+/**
+ * Result of a create, correction or void: immutable data only, so the first response and every
+ * replay are byte-for-byte equal. No notes, no current names, no currentRevision, no current
+ * status, no warnings.
+ */
+export interface TransactionWriteResult {
+  operation: IdempotentOperation;
+  transactionId: string;
+  txnType: TxnType;
+  /** The version this operation produced or acted on (not the transaction's current revision). */
+  revision: number;
+  eventId: string;
+  /** Decided by the operation: active for create / correct, voided for void. */
+  statusAfter: TxnStatus;
+  /** createdAt of that version's event; voidedAt for a void. */
+  recordedAt: number;
+  event: EventFacts;
+  entries: EntryFacts[];
+  void: { voidedAt: number; reason: string | null } | null;
+}
+
+export interface TransactionEntryDto extends EntryFacts {
+  /** Current summary of the account (its name may have changed since). */
+  account: AccountSummary;
+}
+
+export interface TransactionRevisionSummary {
+  revision: number;
+  revisionKind: RevisionKind;
+  correctionReason: string | null;
+  createdAt: number;
+}
+
+/** GET /transactions/:id: the current version plus mutable data (notes, status) and current names. */
+export interface TransactionDto {
+  id: string;
+  txnType: TxnType;
+  status: TxnStatus;
+  currentRevision: number;
+  notes: string | null;
+  createdAt: number;
+  updatedAt: number;
+  voidedAt: number | null;
+  voidReason: string | null;
+  event: EventFacts;
+  entries: TransactionEntryDto[];
+  card: CardSummary | null;
+  paymentChannel: { id: string; name: string; channelType: ChannelType; status: ChannelStatus } | null;
+  revisions: TransactionRevisionSummary[];
+}
+
+export type TransactionListItem = Omit<TransactionDto, 'revisions'>;
+
+export interface TransactionListDto {
+  items: TransactionListItem[];
+  nextCursor: string | null;
+}
+
+/** GET /transactions/:id/revisions/:revision */
+export interface TransactionRevisionDto {
+  transactionId: string;
+  txnType: TxnType;
+  revision: number;
+  event: EventFacts;
+  entries: TransactionEntryDto[];
+}
+
+/** PATCH /transactions/:id/notes */
+export interface TransactionNotesDto {
+  id: string;
+  notes: string | null;
+  updatedAt: number;
+}
+
+export interface SummaryGroup {
+  txnType: TxnType;
+  direction: EntryDirection;
+  currency: string;
+  currencyExponent: number;
+  merchantScope: MerchantScope | null;
+  transferScope: TransferScope | null;
+  /** From the entry's jurisdiction snapshot and the transaction's home_region snapshot. */
+  accountScope: 'foreign' | 'domestic';
+  /** Exact minor-unit decimal string (may exceed 2^53). */
+  amount: string;
+  count: number;
+}
+
+/** GET /transactions/summary: per original currency, never summed across currencies or exponents. */
+export interface TransactionSummaryDto {
+  from: string | null;
+  to: string | null;
+  /** Home regions saved in the period's transactions (more than one: the UI points it out). */
+  homeRegions: string[];
+  foreign: SummaryGroup[];
+  undetermined: SummaryGroup[];
+  /** Always empty under P2 (confirmed domestic versions are never published). */
+  domestic: SummaryGroup[];
+  pending: { foreignStatus: ForeignStatus; txnType: TxnType; direction: EntryDirection; currency: string; currencyExponent: number; count: number }[];
+}
+
+/** details of a 409 IDEMPOTENCY_CONFLICT (only the caller's own data). */
+export interface IdempotencyConflictDetails {
+  operation: IdempotentOperation;
+  transactionId: string;
+}
+
+/** details of a 409 REVISION_CONFLICT. */
+export interface RevisionConflictDetails {
+  currentRevision: number;
 }

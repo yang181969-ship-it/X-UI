@@ -1,7 +1,7 @@
 # X-UI Product v1 — 数据模型（DATA_MODEL）
 
 > 状态：M1 表已实现；**M2 表已由迁移 `0001_m2_accounts` 实现（M2-B1，含 B1 加固：`user_preferences`、审计保留策略、`expires_on`、余额账户触发器）**；M2 API：机构（M2-B2.1）、账户及其币种（M2-B2.2）与个人设置 `home_region`（M2-B2.3）、银行卡（M2-B3，复用 `cards` 表，无数据库变更）、银行卡-账户关联与默认消费来源推荐（M2-B4，复用 `account_card_links` 表，无数据库变更）、支付渠道及其资金来源（M2-B5，复用 `payment_channels`、`payment_channel_sources` 表，无数据库变更）已实现。
-> **M3（交易账本）数据模型已定稿：§10**（M3-A → M3-A.1 → M3-A.2，P1–P9 已获用户批准，见 [M3_DECISIONS.md](M3_DECISIONS.md)）；迁移 `0002_m3_transactions` 尚未编写（M3-B1）。§8 是 M2 时期对 M3 的要求，保留原文，以 §10 为实施依据。
+> **M3（交易账本）数据模型已定稿：§10**（M3-A → M3-A.1 → M3-A.2，P1–P9 已获用户批准，见 [M3_DECISIONS.md](M3_DECISIONS.md)）；迁移 `0002_m3_transactions` 已由 M3-B1 实施（四张表、索引、21 个触发器），并在 libSQL 与本地 D1 完成验收；交易 API 尚未实现（M3-B2 起）。§8 是 M2 时期对 M3 的要求，保留原文，以 §10 为实施依据。
 > 相关文档：[PRODUCT_SPEC.md](PRODUCT_SPEC.md) · [API_SPEC.md](API_SPEC.md) · [TEST_PLAN.md](TEST_PLAN.md) · [M3_DECISIONS.md](M3_DECISIONS.md)
 
 ## 1. 通用约定
@@ -491,7 +491,7 @@ M3 的具体表名与其余字段在 M3 设计时确定；以下是 M2 对 M3 �
 ## 10. M3 数据模型（正式定义）
 
 > 依据：M3-A.2 为准，未覆盖处继承 M3-A.1、M3-A；P1–P9 已获用户批准（[M3_DECISIONS.md](M3_DECISIONS.md)）。产品规则见 PRODUCT_SPEC §7，接口见 API_SPEC §5，测试见 TEST_PLAN §5。本节是迁移 `0002_m3_transactions`（M3-B1）与写入服务（M3-B2、B3）的实施依据。
-> **验证状态**：§10.13 所列关键机制只在**内存 libSQL** 上做过探针验证；**本地 D1 尚未验证**，由 M3-B1 完成。任何一项在 D1 上不成立时，B1 停止并报告，不得自行改用其他方案。
+> **验证状态**：§10.13 所列关键机制已由 M3-B1 在 libSQL 与本地 D1 上全部验证通过（DB-M3-0 探针 `test/m3-db-probe.test.ts`，约束与写入链 `m3-schema.test.ts`、`m3-chains.test.ts`）。
 
 ### 10.1 总览与约定
 
@@ -622,7 +622,7 @@ CHECK：`(status = 'voided') = (voided_at IS NOT NULL)`；`(status = 'voided') =
 | created_at | integer | 否 | | |
 
 按类型的 CHECK：`txn_type <> 'merchant_spend' OR direction = 'out'`；`txn_type <> 'merchant_refund' OR direction = 'in'`。
-索引：`UNIQUE(id, user_id)`；`UNIQUE(event_id, direction)`（每版本至多一出一入）；`UNIQUE(event_id, funding_account_id)`（同一账户不能在同一版本中既出又入，即不做同一账户内换币，D2 / K7）；`UNIQUE(event_id) WHERE txn_type <> 'own_transfer'`（消费、退款、第三方汇款至多一条）；`INDEX(user_id, funding_account_id)`。
+索引：`UNIQUE(id, user_id)`；`UNIQUE(event_id, direction)`（每版本至多一出一入）；`UNIQUE(event_id, funding_account_id)`（同一账户不能在同一版本中既出又入，即不做同一账户内换币，D2 / K7）；`UNIQUE(event_id) WHERE txn_type <> 'own_transfer'`（消费、退款、第三方汇款至多一条）；`INDEX(user_id, funding_account_id)`；`INDEX(carried_from_entry_id, user_id)`（自引用外键的子表侧，列顺序与外键一致：删除 Entry——只发生在删除用户的级联中——时查找沿用它的 Entry）。
 
 ### 10.5 `ledger_idempotency_keys` 幂等键（完成结果）
 
@@ -902,16 +902,16 @@ GROUP BY …
 - 迁移 `0002_m3_transactions.sql` 只新建本节四张表、索引与 §10.7.2 的触发器；不修改任何 M1 / M2 表；`0000`、`0001` 保持字节不变。drizzle-kit 生成后手工修正表达式与部分索引、触发器，文件头注明；`migrations-guard`、新的 M3 迁移测试与 U-4 / U-5 覆盖。
 - 同时需要（M3-B2）：`DELETE /accounts/:id`、`PUT /accounts/:id/currencies`、`DELETE /cards/:id`、`DELETE /payment-channels/:id` 的引用检查与外键失败映射加入流水引用（API_SPEC §5.12）。
 - 共享代码（M3-B1，`@xui/ledger-shared`）：枚举、ISO 4217 最小单位表、金额解析与格式化（字符串 / BigInt，不经浮点）、`classify` v1（三态，§10.8）、请求规范化与哈希 v1（API_SPEC §5.0.3）、zod schema 与 DTO 类型。
-- 探针验证状态：
+- 探针验证状态（M3-B1 已在两个环境中完成全部探针）：
 
 | 机制 | 内存 libSQL | 本地 D1 |
 |---|---|---|
-| `SUM` 溢出报错（9300 行上限金额）、`TOTAL()` 失真、分段求和 + BigInt 精确 | 已验证 | **未验证** |
-| `typeof` 整数 CHECK（拒绝 `78.3`、`0`，接受 `7830.0`） | 已验证 | **未验证** |
-| 部分唯一索引 `WHERE txn_type <> 'own_transfer'`、`UNIQUE(event_id, direction)` | 已验证 | **未验证** |
-| 幂等键字符集 GLOB | 已验证 | **未验证** |
-| 含子查询的发布分类触发器拒绝不一致版本 | 已验证 | **未验证** |
-| 删除守卫与用户级联共存、`foreign_key_check` 为空 | 已验证 | **未验证** |
-| 交易头 INSERT 守卫、UPDATE 守卫（`SELECT CASE … RAISE` 的错误码顺序）、发布触发器的 `WHEN` 条件 | 未验证 | **未验证** |
-| 最后一步 `INSERT … SELECT` 的 NOT NULL 断言（不完整则整体回滚、同键第二次零写入） | 已验证 | **未验证** |
-| 上述写法能否以 drizzle 查询构造器在 D1 batch 中表达；Event 插入语句 ≤ 100 个绑定参数 | 未验证 | **未验证** |
+| `SUM` 溢出报错（9300 行上限金额）、`TOTAL()` 失真、分段求和 + BigInt 精确 | 已验证 | 已验证（M3-B1） |
+| `typeof` 整数 CHECK（拒绝 `78.3`、`0`，接受 `7830.0`） | 已验证 | 已验证（M3-B1） |
+| 部分唯一索引 `WHERE txn_type <> 'own_transfer'`、`UNIQUE(event_id, direction)` | 已验证 | 已验证（M3-B1） |
+| 幂等键字符集 GLOB | 已验证 | 已验证（M3-B1） |
+| 含子查询的发布分类触发器拒绝不一致版本 | 已验证 | 已验证（M3-B1） |
+| 删除守卫与用户级联共存、`foreign_key_check` 为空 | 已验证 | 已验证（M3-B1） |
+| 交易头 INSERT 守卫、UPDATE 守卫（`SELECT CASE … RAISE` 的错误码顺序）、发布触发器的 `WHEN` 条件 | 已验证（M3-B1） | 已验证（M3-B1） |
+| 最后一步 `INSERT … SELECT` 的 NOT NULL 断言（不完整则整体回滚、同键第二次零写入） | 已验证 | 已验证（M3-B1） |
+| 上述写法能否以 drizzle 查询构造器在 D1 batch 中表达；Event 插入语句 ≤ 100 个绑定参数 | 已验证（M3-B1） | 已验证（M3-B1） |

@@ -15,6 +15,13 @@
       "when": 1793625992035,
       "tag": "0001_m2_accounts",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1793764421083,
+      "tag": "0002_m3_transactions",
+      "breakpoints": true
     }
   ]
 }

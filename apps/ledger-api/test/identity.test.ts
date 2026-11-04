@@ -53,10 +53,11 @@ describe('first start and restarts', () => {
       expect(names).toContain(MIGRATIONS_TABLE);
       expect(names).toContain(META_TABLE);
       expect(names).not.toContain(LEGACY_MIGRATIONS_TABLE);
-      // M1 auth/settings tables plus the eight M2 tables — nothing copied from the legacy schema.
+      // M1 auth/settings tables plus the eight M2 and four M3 tables — nothing copied from the legacy schema.
       expect(names.filter((n) => !n.startsWith('_') && n !== META_TABLE).sort()).toEqual(
         ['audit_log', 'auth_challenges', 'login_attempts', 'passkeys', 'recovery_codes', 'sessions', 'settings', 'users']
           .concat(['user_preferences', 'institutions', 'accounts', 'account_currencies', 'cards', 'account_card_links', 'payment_channels', 'payment_channel_sources'])
+          .concat(['transactions', 'transaction_events', 'transaction_entries', 'ledger_idempotency_keys'])
           .sort(),
       );
     }));

@@ -30,6 +30,7 @@ interface Driver {
 }
 
 const M2_TABLES = ['user_preferences', 'institutions', 'accounts', 'account_currencies', 'cards', 'account_card_links', 'payment_channels', 'payment_channel_sources'] as const;
+const M3_TABLES = ['transactions', 'transaction_events', 'transaction_entries', 'ledger_idempotency_keys'] as const;
 const BALANCE_KIND = /BALANCE_ACCOUNT_KIND/;
 const INSTITUTION_IMMUTABLE = /ACCOUNT_INSTITUTION_IMMUTABLE/;
 const journalTags = () => (JSON.parse(readFileSync(join(MIGRATIONS_DIR, 'meta/_journal.json'), 'utf8')) as { entries: { tag: string }[] }).entries.map((e) => e.tag);
@@ -543,7 +544,9 @@ describe.each(['libsql', 'd1'] as const)('M2 constraints on %s', (engine) => {
       const auditBefore = await count(d(), 'audit_log', 'user_id = ?', [a.u]);
       expect(auditBefore).toBeGreaterThan(0);
       const before = await rowsOfUser(d(), tables, b.u);
-      expect(Object.values(await rowsOfUser(d(), tables, a.u)).every((n) => n > 0)).toBe(true);
+      // The M3 ledger tables are empty here; their cascade with data is DEL-4 (m3-schema.test.ts).
+      const seeded = Object.entries(await rowsOfUser(d(), tables, a.u)).filter(([t]) => !(M3_TABLES as readonly string[]).includes(t));
+      expect(seeded.every(([, n]) => n > 0)).toBe(true);
 
       await d().run('DELETE FROM users WHERE id = ?', [a.u]);
 
@@ -1010,7 +1013,8 @@ describe.each(['libsql', 'd1'] as const)('M2 constraints on %s', (engine) => {
     });
 
     it('has the balance-account and institution triggers', async () => {
-      const rows = await d().all("SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'trigger' ORDER BY name");
+      // M2 tables only: the M3 ledger triggers are checked by m3-schema.test.ts.
+      const rows = (await d().all("SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'trigger' ORDER BY name")).filter((r) => (M2_TABLES as readonly string[]).includes(String(r.tbl_name)));
       expect(Object.fromEntries(rows.map((r) => [String(r.name), String(r.tbl_name)]))).toEqual(EXPECTED_TRIGGERS);
       for (const r of rows.filter((x) => String(x.name).includes('balance_kind'))) {
         expect(norm(r.sql)).toContain("NOT IN ('e_money', 'stored_value')");

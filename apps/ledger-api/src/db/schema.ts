@@ -4,6 +4,9 @@ import {
   ACCOUNT_CURRENCY_STATUSES,
   ACCOUNT_STATUSES,
   ACCOUNT_TYPES,
+  AMOUNT_MAX,
+  AMOUNT_MIN,
+  AMOUNT_STATUSES,
   CARD_FORMS,
   CARD_LINK_ROLES,
   CARD_LINK_STATUSES,
@@ -13,10 +16,24 @@ import {
   CHANNEL_SOURCE_STATUSES,
   CHANNEL_STATUSES,
   CHANNEL_TYPES,
+  COUNTERPARTY_KINDS,
+  COUNTRY_SOURCES,
+  CURRENCY_STATUSES_AT_SAVE,
   DEFAULT_HOME_REGION,
   DEPOSIT_KINDS,
+  ENTRY_DIRECTIONS,
+  FOREIGN_STATUSES,
+  HOME_REGION_SOURCES,
+  IDEMPOTENT_OPERATIONS,
   INSTITUTION_STATUSES,
   INSTITUTION_TYPES,
+  MERCHANT_SCOPES,
+  RECORD_MODES,
+  REVISION_KINDS,
+  TRANSFER_METHODS,
+  TRANSFER_SCOPES,
+  TXN_STATUSES,
+  TXN_TYPES,
 } from '@xui/ledger-shared';
 
 /**
@@ -27,6 +44,8 @@ import {
  * column layout of the legacy app (apps/api).
  * M2: institutions, accounts, account currencies, cards, card ↔ account links, payment channels
  * and their funding sources (docs/product-v1/DATA_MODEL.md §3–§4).
+ * M3: the transaction ledger — headers, immutable versions (events) and entries, and the
+ * idempotency results of financial writes (DATA_MODEL §10).
  */
 
 const ts = (name: string) => integer(name).notNull();
@@ -465,5 +484,286 @@ export const paymentChannelSources = sqliteTable(
     check('payment_channel_sources_is_default_ck', isBool('is_default')),
     check('payment_channel_sources_default_ck', sql.raw(`is_default = 0 OR status = 'active'`)),
     check('payment_channel_sources_status_ck', inList('status', CHANNEL_SOURCE_STATUSES)),
+  ],
+);
+
+// ================================================================== M3 (DATA_MODEL §10)
+//
+// transactions (header: identity, status, current version, notes, void data — the only table that
+// is ever updated, and only as tx_update_guard allows) → transaction_events (one immutable row per
+// version) → transaction_entries (one immutable row per real account movement of a version);
+// ledger_idempotency_keys holds the complete result of each financial write, inserted once as the
+// last statement of the write batch (§10.10) and never changed.
+// - Amounts are minor-unit integers (typeof = 'integer', 1 … AMOUNT_MAX), each with its currency's
+//   decimal places saved beside it; snapshots (home_region, funding_account_country,
+//   currency_status_at_save) are written by SQL inside the write batch, never taken from clients.
+// - The 21 triggers of §10.7.2 (version order, immutability, snapshot sources, version kinds,
+//   closed currencies, publish checks C1–C7 and delete guards) are hand-written in migration 0002.
+// - Foreign keys follow the M2 rules: composite with user_id, NO ACTION (never RESTRICT or SET
+//   NULL) for referenced master data, CASCADE down the ledger and from users. The ledger is only
+//   deleted together with its user (§10.11).
+// test/m3-schema.test.ts runs every constraint and trigger on libsql and on local D1.
+
+const optInList = (col: string, values: readonly string[]) => sql.raw(`${col} IS NULL OR ${inListSql(col, values)}`);
+/**
+ * typeof(col) = 'integer': revisions, decimal places and version numbers are whole numbers. A range
+ * alone would let a REAL such as 2.5 through (INTEGER affinity only turns 2.0 into 2).
+ */
+const isInt = (col: string) => `typeof(${col}) = 'integer'`;
+/** A minor-unit amount: an integer (not a REAL such as 78.3) in [AMOUNT_MIN, AMOUNT_MAX]; NULL allowed. */
+const amountCheck = (col: string) => sql.raw(`${col} IS NULL OR (typeof(${col}) = 'integer' AND ${col} BETWEEN ${AMOUNT_MIN} AND ${AMOUNT_MAX})`);
+
+// ------------------------------------------------------------------ transactions (header)
+
+export const transactions = sqliteTable(
+  'transactions',
+  {
+    id: text('id').primaryKey(),
+    userId: ownerId(),
+    /** Never changes (tx_update_guard): a wrongly typed transaction is voided and recreated. */
+    txnType: text('txn_type', { enum: TXN_TYPES }).notNull(),
+    /** voided is final. */
+    status: text('status', { enum: TXN_STATUSES }).notNull().default('active'),
+    /** 0 = not yet published (only inside a write batch); then 1, 2, … one step at a time. */
+    currentRevision: integer('current_revision').notNull().default(0),
+    /** Not a transaction fact: no version, no history, editable in any status (P9). */
+    notes: text('notes'),
+    voidedAt: integer('voided_at'),
+    voidReason: text('void_reason'),
+    /** op_id of the request that voided the transaction (§10.10). */
+    voidedOpId: text('voided_op_id'),
+    createdAt: ts('created_at'),
+    updatedAt: ts('updated_at'),
+  },
+  (t) => [
+    unique('transactions_id_user_uq').on(t.id, t.userId),
+    // Target of the events' (transaction_id, txn_type, user_id) key: a version has its header's type.
+    unique('transactions_id_type_user_uq').on(t.id, t.txnType, t.userId),
+    index('transactions_user_status_idx').on(t.userId, t.status),
+    check('transactions_type_ck', inList('txn_type', TXN_TYPES)),
+    check('transactions_status_ck', inList('status', TXN_STATUSES)),
+    check('transactions_revision_ck', sql.raw(`${isInt('current_revision')} AND current_revision >= 0`)),
+    check('transactions_voided_at_ck', sql.raw(`(status = 'voided') = (voided_at IS NOT NULL)`)),
+    check('transactions_voided_op_ck', sql.raw(`(status = 'voided') = (voided_op_id IS NOT NULL)`)),
+    check('transactions_void_reason_ck', sql.raw(`void_reason IS NULL OR status = 'voided'`)),
+    check('transactions_published_ck', sql.raw(`status = 'active' OR current_revision >= 1`)),
+  ],
+);
+
+// ------------------------------------------------------------------ transaction_events (versions)
+
+const MERCHANT_TYPES_SQL = `('merchant_spend', 'merchant_refund')`;
+const TRANSFER_TYPES_SQL = `('own_transfer', 'third_party_transfer')`;
+
+export const transactionEvents = sqliteTable(
+  'transaction_events',
+  {
+    id: text('id').primaryKey(),
+    userId: ownerId(),
+    transactionId: text('transaction_id').notNull(),
+    txnType: text('txn_type', { enum: TXN_TYPES }).notNull(),
+    revision: integer('revision').notNull(),
+    revisionKind: text('revision_kind', { enum: REVISION_KINDS }).notNull(),
+    correctionReason: text('correction_reason'),
+    /** Declared by the user (P6). */
+    recordMode: text('record_mode', { enum: RECORD_MODES }).notNull(),
+    /** Local date of the record, YYYY-MM-DD (no time-zone conversion). */
+    occurredOn: text('occurred_on').notNull(),
+    occurredTime: text('occurred_time'),
+    postedOn: text('posted_on'),
+    /** Spend / refund: the merchant amount; transfers: the principal sent (never the amount received, §10.3.1). */
+    eventCurrency: text('event_currency'),
+    eventAmount: integer('event_amount'),
+    eventCurrencyExponent: integer('event_currency_exponent'),
+    merchantName: text('merchant_name'),
+    merchantCountry: text('merchant_country'),
+    cardId: text('card_id'),
+    paymentChannelId: text('payment_channel_id'),
+    transferMethod: text('transfer_method', { enum: TRANSFER_METHODS }),
+    counterpartyKind: text('counterparty_kind', { enum: COUNTERPARTY_KINDS }),
+    counterpartyName: text('counterparty_name'),
+    /** Jurisdiction of the unregistered side's contracting entity (same definition as account_country). */
+    counterpartyCountry: text('counterparty_country'),
+    counterpartyInstitution: text('counterparty_institution'),
+    counterpartyAccountHint: text('counterparty_account_hint'),
+    /** Snapshot (§10.3.2); never re-read from the current preference. */
+    homeRegion: text('home_region').notNull(),
+    homeRegionSource: text('home_region_source', { enum: HOME_REGION_SOURCES }).notNull(),
+    merchantScope: text('merchant_scope', { enum: MERCHANT_SCOPES }),
+    transferScope: text('transfer_scope', { enum: TRANSFER_SCOPES }),
+    foreignStatus: text('foreign_status', { enum: FOREIGN_STATUSES }).notNull(),
+    classifierVersion: integer('classifier_version').notNull(),
+    createdAt: ts('created_at'),
+  },
+  (t) => [
+    unique('transaction_events_id_user_uq').on(t.id, t.userId),
+    // Target of the entries' (event_id, txn_type, user_id) key.
+    unique('transaction_events_id_type_user_uq').on(t.id, t.txnType, t.userId),
+    unique('transaction_events_revision_uq').on(t.transactionId, t.revision),
+    index('transaction_events_user_occurred_idx').on(t.userId, t.occurredOn),
+    index('transaction_events_user_card_idx').on(t.userId, t.cardId),
+    index('transaction_events_user_channel_idx').on(t.userId, t.paymentChannelId),
+    foreignKey({ columns: [t.transactionId, t.txnType, t.userId], foreignColumns: [transactions.id, transactions.txnType, transactions.userId] }).onDelete('cascade'),
+    foreignKey({ columns: [t.cardId, t.userId], foreignColumns: [cards.id, cards.userId] }).onDelete('no action'),
+    foreignKey({ columns: [t.paymentChannelId, t.userId], foreignColumns: [paymentChannels.id, paymentChannels.userId] }).onDelete('no action'),
+    check('transaction_events_type_ck', inList('txn_type', TXN_TYPES)),
+    check('transaction_events_revision_ck', sql.raw(`${isInt('revision')} AND revision >= 1`)),
+    check('transaction_events_revision_kind_ck', inList('revision_kind', REVISION_KINDS)),
+    check('transaction_events_original_ck', sql.raw(`(revision = 1) = (revision_kind = 'original')`)),
+    check(
+      'transaction_events_reason_ck',
+      sql.raw(`(revision_kind <> 'original' OR correction_reason IS NULL) AND (revision_kind NOT IN ('fact_correction', 'snapshot_correction') OR correction_reason IS NOT NULL)`),
+    ),
+    check('transaction_events_record_mode_ck', inList('record_mode', RECORD_MODES)),
+    check('transaction_events_occurred_time_ck', sql.raw(`occurred_time IS NULL OR occurred_time GLOB '[0-2][0-9]:[0-5][0-9]'`)),
+    check('transaction_events_posted_on_ck', sql.raw(`posted_on IS NULL OR posted_on >= occurred_on`)),
+    check('transaction_events_currency_ck', sql.raw(`event_currency IS NULL OR event_currency GLOB '[A-Z][A-Z][A-Z]'`)),
+    check('transaction_events_amount_ck', amountCheck('event_amount')),
+    check('transaction_events_exponent_ck', sql.raw(`event_currency_exponent IS NULL OR (${isInt('event_currency_exponent')} AND event_currency_exponent BETWEEN 0 AND 4)`)),
+    check('transaction_events_exponent_currency_ck', sql.raw(`(event_currency IS NULL) = (event_currency_exponent IS NULL)`)),
+    check('transaction_events_amount_currency_ck', sql.raw(`event_amount IS NULL OR event_currency IS NOT NULL`)),
+    // P8: only a third-party transfer may lack the event amount (C5 also requires no out entry).
+    check('transaction_events_amount_required_ck', sql.raw(`event_amount IS NOT NULL OR txn_type = 'third_party_transfer'`)),
+    check('transaction_events_merchant_country_ck', optAlpha2('merchant_country')),
+    check('transaction_events_transfer_method_ck', optInList('transfer_method', TRANSFER_METHODS)),
+    check('transaction_events_counterparty_kind_ck', optInList('counterparty_kind', COUNTERPARTY_KINDS)),
+    check('transaction_events_counterparty_country_ck', optAlpha2('counterparty_country')),
+    check(
+      'transaction_events_counterparty_hint_ck',
+      sql.raw(`counterparty_account_hint IS NULL OR (length(counterparty_account_hint) BETWEEN 1 AND 4 AND counterparty_account_hint NOT GLOB '*[^0-9A-Za-z]*')`),
+    ),
+    check('transaction_events_home_region_ck', alpha2('home_region')),
+    check('transaction_events_home_region_source_ck', inList('home_region_source', HOME_REGION_SOURCES)),
+    // Which versions each home_region source may appear in (§10.3.2).
+    check(
+      'transaction_events_home_region_source_rule_ck',
+      sql.raw(
+        `(home_region_source <> 'preference_at_save' OR revision = 1) AND (home_region_source <> 'user_declared' OR (revision = 1 AND record_mode = 'backfill')) AND (home_region_source <> 'carried' OR revision > 1) AND (home_region_source <> 'user_corrected' OR (revision > 1 AND revision_kind = 'snapshot_correction'))`,
+      ),
+    ),
+    check('transaction_events_merchant_scope_ck', optInList('merchant_scope', MERCHANT_SCOPES)),
+    check('transaction_events_transfer_scope_ck', optInList('transfer_scope', TRANSFER_SCOPES)),
+    check('transaction_events_foreign_status_ck', inList('foreign_status', FOREIGN_STATUSES)),
+    check('transaction_events_classifier_ck', sql.raw(`${isInt('classifier_version')} AND classifier_version >= 1`)),
+    // Fields of each type (§10.3).
+    check(
+      'transaction_events_merchant_shape_ck',
+      sql.raw(
+        `txn_type NOT IN ${MERCHANT_TYPES_SQL} OR (transfer_method IS NULL AND counterparty_kind IS NULL AND counterparty_name IS NULL AND counterparty_country IS NULL AND counterparty_institution IS NULL AND counterparty_account_hint IS NULL AND merchant_scope IS NOT NULL AND transfer_scope IS NULL AND event_amount IS NOT NULL)`,
+      ),
+    ),
+    check(
+      'transaction_events_transfer_shape_ck',
+      sql.raw(
+        `txn_type NOT IN ${TRANSFER_TYPES_SQL} OR (card_id IS NULL AND merchant_name IS NULL AND merchant_country IS NULL AND merchant_scope IS NULL AND transfer_scope IS NOT NULL AND counterparty_kind = CASE txn_type WHEN 'own_transfer' THEN 'self' ELSE 'third_party' END)`,
+      ),
+    ),
+    // merchant_scope follows from the same row (C6 re-derives the rest at publish time).
+    check(
+      'transaction_events_merchant_scope_rule_ck',
+      sql.raw(`merchant_scope IS NULL OR merchant_scope = CASE WHEN merchant_country IS NULL THEN 'unknown' WHEN merchant_country = home_region THEN 'domestic' ELSE 'foreign' END`),
+    ),
+  ],
+);
+
+// ------------------------------------------------------------------ transaction_entries
+
+export const transactionEntries = sqliteTable(
+  'transaction_entries',
+  {
+    id: text('id').primaryKey(),
+    userId: ownerId(),
+    eventId: text('event_id').notNull(),
+    txnType: text('txn_type', { enum: TXN_TYPES }).notNull(),
+    direction: text('direction', { enum: ENTRY_DIRECTIONS }).notNull(),
+    /** out: the account charged · in: the account credited (K2). */
+    fundingAccountId: text('funding_account_id').notNull(),
+    /** out: the currency actually charged · in: the currency actually received. */
+    fundingCurrency: text('funding_currency').notNull(),
+    /** Minor units of funding_currency; null while pending. */
+    amount: integer('amount'),
+    amountStatus: text('amount_status', { enum: AMOUNT_STATUSES }).notNull(),
+    currencyExponent: integer('currency_exponent').notNull(),
+    /** Snapshot of accounts.account_country (or carried / user-corrected, country_source). */
+    fundingAccountCountry: text('funding_account_country').notNull(),
+    countrySource: text('country_source', { enum: COUNTRY_SOURCES }).notNull(),
+    /** Status of the account currency when the entry was saved. */
+    currencyStatusAtSave: text('currency_status_at_save', { enum: CURRENCY_STATUSES_AT_SAVE }).notNull(),
+    closedCurrencyAck: bool('closed_currency_ack').notNull().default(false),
+    /** The previous version's entry of the same account whose snapshot this one carries. */
+    carriedFromEntryId: text('carried_from_entry_id'),
+    createdAt: ts('created_at'),
+  },
+  (t) => [
+    unique('transaction_entries_id_user_uq').on(t.id, t.userId),
+    // At most one out and one in per version …
+    unique('transaction_entries_event_direction_uq').on(t.eventId, t.direction),
+    // … never both on one account (no currency exchange within an account, D2 / K7) …
+    unique('transaction_entries_event_account_uq').on(t.eventId, t.fundingAccountId),
+    // … and only an own transfer has two.
+    uniqueIndex('transaction_entries_single_uq').on(t.eventId).where(sql`${t.txnType} <> 'own_transfer'`),
+    index('transaction_entries_user_account_idx').on(t.userId, t.fundingAccountId),
+    // Child side of the self-referencing (carried_from_entry_id, user_id) key, same column order:
+    // deleting an entry (only ever in a user cascade) looks up the entries that carry it.
+    index('transaction_entries_carried_from_idx').on(t.carriedFromEntryId, t.userId),
+    foreignKey({ columns: [t.eventId, t.txnType, t.userId], foreignColumns: [transactionEvents.id, transactionEvents.txnType, transactionEvents.userId] }).onDelete('cascade'),
+    foreignKey({ columns: [t.fundingAccountId, t.userId], foreignColumns: [accounts.id, accounts.userId] }).onDelete('no action'),
+    foreignKey({
+      columns: [t.fundingAccountId, t.userId, t.fundingCurrency],
+      foreignColumns: [accountCurrencies.accountId, accountCurrencies.userId, accountCurrencies.currency],
+    }).onDelete('no action'),
+    foreignKey({ columns: [t.carriedFromEntryId, t.userId], foreignColumns: [t.id, t.userId] }).onDelete('no action'),
+    check('transaction_entries_type_ck', inList('txn_type', TXN_TYPES)),
+    check('transaction_entries_direction_ck', inList('direction', ENTRY_DIRECTIONS)),
+    check('transaction_entries_amount_ck', amountCheck('amount')),
+    check('transaction_entries_amount_status_ck', inList('amount_status', AMOUNT_STATUSES)),
+    check('transaction_entries_pending_ck', sql.raw(`(amount IS NULL) = (amount_status = 'pending')`)),
+    check('transaction_entries_exponent_ck', sql.raw(`${isInt('currency_exponent')} AND currency_exponent BETWEEN 0 AND 4`)),
+    check('transaction_entries_country_ck', alpha2('funding_account_country')),
+    check('transaction_entries_country_source_ck', inList('country_source', COUNTRY_SOURCES)),
+    check('transaction_entries_carried_ck', sql.raw(`(carried_from_entry_id IS NULL) = (country_source = 'account_at_save')`)),
+    check('transaction_entries_currency_status_ck', inList('currency_status_at_save', CURRENCY_STATUSES_AT_SAVE)),
+    check('transaction_entries_ack_ck', isBool('closed_currency_ack')),
+    check('transaction_entries_ack_closed_ck', sql.raw(`closed_currency_ack = 0 OR currency_status_at_save = 'closed'`)),
+    check('transaction_entries_spend_direction_ck', sql.raw(`txn_type <> 'merchant_spend' OR direction = 'out'`)),
+    check('transaction_entries_refund_direction_ck', sql.raw(`txn_type <> 'merchant_refund' OR direction = 'in'`)),
+  ],
+);
+
+// ------------------------------------------------------------------ ledger_idempotency_keys
+
+/** The complete, immutable result of one financial write (§10.5). Create keys are kept; correct / void keys expire after 30 days. */
+export const ledgerIdempotencyKeys = sqliteTable(
+  'ledger_idempotency_keys',
+  {
+    userId: ownerId(),
+    key: text('key').notNull(),
+    operation: text('operation', { enum: IDEMPOTENT_OPERATIONS }).notNull(),
+    /** SHA-256 lower-case hex of the canonical request (hash_version). */
+    requestHash: text('request_hash').notNull(),
+    hashVersion: integer('hash_version').notNull(),
+    opId: text('op_id').notNull(),
+    transactionId: text('transaction_id').notNull(),
+    resultRevision: integer('result_revision').notNull(),
+    resultEventId: text('result_event_id').notNull(),
+    /** No foreign key: audit_log has no (id, user_id) key and outlives deleted users (§6.1). */
+    auditId: text('audit_id').notNull(),
+    responseStatus: integer('response_status').notNull(),
+    createdAt: ts('created_at'),
+    expiresAt: integer('expires_at'),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.key] }),
+    index('ledger_idempotency_keys_user_expires_idx').on(t.userId, t.expiresAt),
+    foreignKey({ columns: [t.transactionId, t.userId], foreignColumns: [transactions.id, transactions.userId] }).onDelete('cascade'),
+    foreignKey({ columns: [t.resultEventId, t.userId], foreignColumns: [transactionEvents.id, transactionEvents.userId] }).onDelete('cascade'),
+    check('ledger_idempotency_keys_key_ck', sql.raw(`length(key) BETWEEN 16 AND 64 AND key NOT GLOB '*[^0-9A-Za-z_-]*'`)),
+    check('ledger_idempotency_keys_operation_ck', inList('operation', IDEMPOTENT_OPERATIONS)),
+    check('ledger_idempotency_keys_hash_ck', sql.raw(`length(request_hash) = 64 AND request_hash NOT GLOB '*[^0-9a-f]*'`)),
+    check('ledger_idempotency_keys_hash_version_ck', sql.raw(`${isInt('hash_version')} AND hash_version >= 1`)),
+    check('ledger_idempotency_keys_result_revision_ck', sql.raw(`${isInt('result_revision')} AND result_revision >= 1`)),
+    check('ledger_idempotency_keys_response_status_ck', sql.raw(`response_status IN (200, 201)`)),
+    check('ledger_idempotency_keys_retention_ck', sql.raw(`(operation = 'transaction.create') = (expires_at IS NULL)`)),
+    check('ledger_idempotency_keys_expires_ck', sql.raw(`expires_at IS NULL OR expires_at > created_at`)),
   ],
 );

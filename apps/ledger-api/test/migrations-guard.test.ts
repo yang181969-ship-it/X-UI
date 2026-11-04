@@ -19,7 +19,35 @@ const journal = JSON.parse(readFileSync(join(MIGRATIONS_DIR, 'meta/_journal.json
 const sqlOf = (tag: string) => readFileSync(join(MIGRATIONS_DIR, `${tag}.sql`), 'utf8');
 
 /** Triggers that must exist after the whole chain (a later table rebuild must re-create them). */
-const REQUIRED_TRIGGERS = ['accounts_balance_kind_update', 'accounts_institution_immutable', 'payment_channels_balance_kind_insert', 'payment_channels_balance_kind_update'];
+const REQUIRED_TRIGGERS = [
+  // M2 (0001)
+  'accounts_balance_kind_update',
+  'accounts_institution_immutable',
+  'payment_channels_balance_kind_insert',
+  'payment_channels_balance_kind_update',
+  // M3 (0002, DATA_MODEL §10.7.2)
+  'tx_insert_guard',
+  'tx_update_guard',
+  'tx_publish_entry_count',
+  'tx_publish_own_shape',
+  'tx_publish_event_amount',
+  'tx_publish_classification',
+  'tx_publish_domestic',
+  'tx_no_delete',
+  'ev_immutable',
+  'ev_insert_order',
+  'ev_snapshot_source',
+  'ev_kind_guard',
+  'ev_no_delete',
+  'en_immutable',
+  'en_insert_open',
+  'en_snapshot_source',
+  'en_kind_guard',
+  'en_closed_currency',
+  'en_no_delete',
+  'key_immutable',
+  'key_create_no_delete',
+];
 
 /** SQL with string literals and comments blanked out (same length), for structural scans. */
 function code(sql: string): string {

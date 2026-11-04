@@ -118,3 +118,135 @@ export const NOTES_MAX = 1000;
 export const WEBSITE_MAX = 200;
 /** Currencies per account (API_SPEC §3.3). */
 export const ACCOUNT_CURRENCIES_MAX = 30;
+
+// ================================================================== M3 transactions (DATA_MODEL §10)
+
+/** No type change after creation: a wrongly typed transaction is voided and recreated. */
+export const TXN_TYPES = ['merchant_spend', 'merchant_refund', 'own_transfer', 'third_party_transfer'] as const;
+export type TxnType = (typeof TXN_TYPES)[number];
+export const MERCHANT_TXN_TYPES = ['merchant_spend', 'merchant_refund'] as const satisfies readonly TxnType[];
+export const TRANSFER_TXN_TYPES = ['own_transfer', 'third_party_transfer'] as const satisfies readonly TxnType[];
+
+/** voided is final. */
+export const TXN_STATUSES = ['active', 'voided'] as const;
+export type TxnStatus = (typeof TXN_STATUSES)[number];
+
+/** original is revision 1; every later version is one of the three corrections (§10.9.2). */
+export const REVISION_KINDS = ['original', 'settlement', 'fact_correction', 'snapshot_correction'] as const;
+export type RevisionKind = (typeof REVISION_KINDS)[number];
+export const CORRECTION_KINDS = ['settlement', 'fact_correction', 'snapshot_correction'] as const satisfies readonly RevisionKind[];
+export type CorrectionKind = (typeof CORRECTION_KINDS)[number];
+
+/** Declared by the user (P6): the system never decides it from the date. */
+export const RECORD_MODES = ['current', 'backfill'] as const;
+export type RecordMode = (typeof RECORD_MODES)[number];
+
+/** in: the funding_* columns name the receiving account and currency (K2). */
+export const ENTRY_DIRECTIONS = ['out', 'in'] as const;
+export type EntryDirection = (typeof ENTRY_DIRECTIONS)[number];
+
+/** pending: amount unknown (null) — never estimated, not in the statistics. */
+export const AMOUNT_STATUSES = ['confirmed', 'pending'] as const;
+export type AmountStatus = (typeof AMOUNT_STATUSES)[number];
+
+/** Transfers only; never used to decide where a side is. */
+export const TRANSFER_METHODS = ['swift', 'sepa', 'fps', 'ach', 'local_transfer', 'internal_book', 'other'] as const;
+export type TransferMethod = (typeof TRANSFER_METHODS)[number];
+
+/** Decided by the transaction type: own_transfer → self, third_party_transfer → third_party. */
+export const COUNTERPARTY_KINDS = ['self', 'third_party'] as const;
+export type CounterpartyKind = (typeof COUNTERPARTY_KINDS)[number];
+
+/** Where an event's home_region snapshot came from (§10.3.2). */
+export const HOME_REGION_SOURCES = ['preference_at_save', 'carried', 'user_declared', 'user_corrected'] as const;
+export type HomeRegionSource = (typeof HOME_REGION_SOURCES)[number];
+
+/** Where an entry's funding_account_country snapshot came from (§10.4). */
+export const COUNTRY_SOURCES = ['account_at_save', 'carried', 'user_corrected'] as const;
+export type CountrySource = (typeof COUNTRY_SOURCES)[number];
+
+/** Status of the account currency when the entry was saved (not when the transaction happened). */
+export const CURRENCY_STATUSES_AT_SAVE = ACCOUNT_CURRENCY_STATUSES;
+export type CurrencyStatusAtSave = AccountCurrencyStatus;
+
+// ------------------------------------------------------------------ region classification v1 (§10.8)
+
+/** The one classifier version v1 knows; later versions only via an explicit per-transaction snapshot correction. */
+export const CLASSIFIER_VERSION = 1;
+
+/** foreign: confirmed abroad · domestic: confirmed purely domestic (never published, P2) · undetermined: not enough information — not domestic. */
+export const FOREIGN_STATUSES = ['foreign', 'domestic', 'undetermined'] as const;
+export type ForeignStatus = (typeof FOREIGN_STATUSES)[number];
+
+/** Merchant side of a spend / refund: unknown when the merchant country is unknown. */
+export const MERCHANT_SCOPES = ['foreign', 'domestic', 'unknown'] as const;
+export type MerchantScope = (typeof MERCHANT_SCOPES)[number];
+
+/** Both sides of a transfer against the home region (§10.8.2 table). */
+export const TRANSFER_SCOPES = [
+  'outbound',
+  'inbound',
+  'foreign_cross_border',
+  'foreign_local',
+  'domestic_local',
+  'domestic_to_unknown',
+  'unknown_to_domestic',
+  'foreign_to_unknown',
+  'unknown_to_foreign',
+] as const;
+export type TransferScope = (typeof TRANSFER_SCOPES)[number];
+
+/** List filter: one of the three states, or all. There is deliberately no "not foreign" filter. */
+export const FOREIGN_STATUS_FILTERS = [...FOREIGN_STATUSES, 'all'] as const;
+export const TXN_STATUS_FILTERS = [...TXN_STATUSES, 'all'] as const;
+
+// ------------------------------------------------------------------ idempotency (API_SPEC §5.0.3)
+
+export const IDEMPOTENT_OPERATIONS = ['transaction.create', 'transaction.correct', 'transaction.void'] as const;
+export type IdempotentOperation = (typeof IDEMPOTENT_OPERATIONS)[number];
+export const IDEMPOTENCY_KEY_HEADER = 'Idempotency-Key';
+export const IDEMPOTENCY_REPLAYED_HEADER = 'Idempotency-Replayed';
+/** Create keys are kept for good; correct / void keys for this many days. */
+export const CORRECTION_KEY_TTL_DAYS = 30;
+
+// ------------------------------------------------------------------ M3 errors (API_SPEC §5.1)
+
+/** Error codes the transaction API adds to LEDGER_ERROR_CODES (which it also uses). */
+export const TRANSACTION_ERROR_CODES = [
+  'IDEMPOTENCY_KEY_REQUIRED',
+  'IDEMPOTENCY_KEY_INVALID',
+  'ENTRY_SHAPE',
+  'CLOSED_CURRENCY_ACK_REQUIRED',
+  'CONFIRMED_DOMESTIC',
+  'IDEMPOTENCY_CONFLICT',
+  'REVISION_CONFLICT',
+  'TRANSACTION_VOIDED',
+  'CONCURRENT_CHANGE',
+] as const;
+export type TransactionErrorCode = (typeof TRANSACTION_ERROR_CODES)[number];
+
+/**
+ * Codes raised by the migration 0002 triggers as RAISE(ABORT, '<CODE>: …') (DATA_MODEL §10.7.2).
+ * Never shown to clients: the API maps them to TRANSACTION_ERROR_CODES / LEDGER_ERROR_CODES.
+ */
+export const LEDGER_DB_ERROR_CODES = [
+  'LEDGER_HEADER_INSERT',
+  'LEDGER_HEADER_IMMUTABLE',
+  'LEDGER_VOIDED',
+  'LEDGER_REVISION_ORDER',
+  'LEDGER_ENTRY_COUNT',
+  'LEDGER_OWN_TRANSFER_SHAPE',
+  'LEDGER_EVENT_AMOUNT',
+  'LEDGER_CLASSIFICATION',
+  'LEDGER_CONFIRMED_DOMESTIC',
+  'LEDGER_NO_DELETE',
+  'LEDGER_IMMUTABLE',
+  'LEDGER_SNAPSHOT_SOURCE',
+  'LEDGER_REVISION_KIND',
+  'LEDGER_CLOSED_CURRENCY',
+  'LEDGER_KEY_IMMUTABLE',
+] as const;
+export type LedgerDbErrorCode = (typeof LEDGER_DB_ERROR_CODES)[number];
+
+/** Reasons (correction, void): 1–200 characters. */
+export const REASON_MAX = 200;
