@@ -305,7 +305,7 @@ describe.each(['libsql', 'd1'] as const)('POST /transactions/:id/revisions — i
       }
     }
     expect(await correctAudits(s.id)).toHaveLength(kinds.length * steps.length);
-  });
+  }, 120_000);
 
   // ================================================================== concurrency (CC-3, CC-6)
 

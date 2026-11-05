@@ -1,7 +1,7 @@
 # X-UI Product v1 — API 规格（API_SPEC）
 
 > 状态：§2 为 M1 已实现接口；§3 起为 M2 设计（M2-A 修订版，含 M2-B1 加固）。**§3.2 金融机构已在 M2-B2.1 实现，§3.3 账户已在 M2-B2.2 实现，§3.1 个人设置已在 M2-B2.3 实现，§3.4 银行卡的 CRUD 已在 M2-B3 实现，§3.5 银行卡-账户关联与 §3.4.1 `spending-source` 推荐已在 M2-B4 实现，§3.6 支付渠道及其资金来源已在 M2-B5 实现**（M2 全部接口已实现）。
-> **§5 为 M3 交易接口的定稿规格**（P1–P9 已获用户批准，见 [M3_DECISIONS.md](M3_DECISIONS.md)）。**M3-B2 已实现** `POST /transactions`（§5.0、§5.4，路由级幂等）、`GET /transactions`（§5.3）、`GET /transactions/:id`（§5.5）与 §5.12 对 M2 删除接口的影响；`GET /transactions/:id/revisions/:revision`、`POST /transactions/:id/revisions`、`POST /transactions/:id/void`、`PATCH /transactions/:id/notes` 待 M3-B3，`GET /transactions/summary` 待 M3-B5（届时须注册在 `/:id` 之前）。§5.0.3、§5.1、§5.2、§5.3、§5.4、§5.12 已按 M3-B2-A 复审决定（Q1–Q10）在 M3-B2.0 细化：错误判定顺序、数据库错误与 HTTP 错误的边界、受控重试、已关闭币种确认的保存、规范化搜索的分页、删除保护的响应结构；§5.2 的 `card` 摘要在 M3-B2 复审中补列 `cardType`（与共享 `CardSummary` 一致）。§5.0.1、§5.0.3、§5.1、§5.6 – §5.9 已按 M3-B3-A 复审决定（Q-B3-1 – Q-B3-12）在 M3-B3-B.0 细化：更正与作废的判定顺序、更正 / 作废键的逻辑过期与统一时间基准、三种版本的字段继承、事实更正的形状校验与无变化判断、版本参数校验、备注相同值的处理（不新增接口、不改变产品规则）。
+> **§5 为 M3 交易接口的定稿规格**（P1–P9 已获用户批准，见 [M3_DECISIONS.md](M3_DECISIONS.md)）。**M3-B2 已实现** `POST /transactions`（§5.0、§5.4，路由级幂等）、`GET /transactions`（§5.3）、`GET /transactions/:id`（§5.5）与 §5.12 对 M2 删除接口的影响；**M3-B3 已实现** `GET /transactions/:id/revisions/:revision`（§5.6）、`POST /transactions/:id/revisions`（§5.7，`settlement` / `fact_correction` / `snapshot_correction`）、`POST /transactions/:id/void`（§5.8）与 `PATCH /transactions/:id/notes`（§5.9）：B3-B（作废、备注、版本查看与财务写的公共幂等流程）、B3-C（三种更正）实现，B3-D 以 HTTP 并发、31 天键生命周期、故障注入、原始字节重放与 DEL-2 静态测试完成验收（TEST_PLAN §5.21）；迁移 `0000` – `0002` 不变，无 `0003`。`GET /transactions/summary` 待 M3-B5（届时须注册在 `/:id` 之前）。§5.0.3、§5.1、§5.2、§5.3、§5.4、§5.12 已按 M3-B2-A 复审决定（Q1–Q10）在 M3-B2.0 细化：错误判定顺序、数据库错误与 HTTP 错误的边界、受控重试、已关闭币种确认的保存、规范化搜索的分页、删除保护的响应结构；§5.2 的 `card` 摘要在 M3-B2 复审中补列 `cardType`（与共享 `CardSummary` 一致）。§5.0.1、§5.0.3、§5.1、§5.6 – §5.9 已按 M3-B3-A 复审决定（Q-B3-1 – Q-B3-12）在 M3-B3-B.0 细化：更正与作废的判定顺序、更正 / 作废键的逻辑过期与统一时间基准、三种版本的字段继承、事实更正的形状校验与无变化判断、版本参数校验、备注相同值的处理（不新增接口、不改变产品规则）。
 > 相关文档：[PRODUCT_SPEC.md](PRODUCT_SPEC.md) · [DATA_MODEL.md](DATA_MODEL.md) · [TEST_PLAN.md](TEST_PLAN.md) · [M3_DECISIONS.md](M3_DECISIONS.md)
 
 ## 1. 通用约定
@@ -602,7 +602,7 @@ type TransactionDto = {
 10. （事实更正、快照更正）400 `CONFIRMED_DOMESTIC`（`details.suggestion = 'void'`；按上一版本的 `home_region` 或快照更正的新值、沿用的快照与预读的新账户法域计算）；补录金额不改变任何分类输入，不会出现此错误；
 11. 写入 batch → 201，或按 DATA_MODEL §10.10"batch 之后的路由处理"给出 404 / 400 / 409（`TRANSACTION_VOIDED` 优先于 `REVISION_CONFLICT`；`CONCURRENT_CHANGE` 只可能出现在事实更正）/ 500。
 
-第 7 步的 `VALIDATION` 沿用现有 zod issue 结构（Q-B3-9）：`details = [{ code: 'custom', path, message }]`，`path` 指向请求中的字段——`['entries', i, 'direction']`、`['entries', i, 'fundingAccountCountry']`、`['homeRegion']`；事实更正与上一版本完全相同时为 `[]`。不新增错误码，`message` 不含任何数据库值或 id。
+第 7 步的 `VALIDATION` 沿用现有 zod issue 结构（Q-B3-9）：`details = [{ code: 'custom', path, message }]`，`path` 指向请求中的字段——`['entries', i, 'direction']`、`['entries', i, 'fundingAccountCountry']`、`['homeRegion']`；事实更正与上一版本完全相同时仍为单条 issue，`path` 为 `[]`。不新增错误码，`message` 不含任何数据库值或 id。
 
 #### 5.7.2 字段继承（M3-B3-B.0，Q-B3-3、Q-B3-11）
 

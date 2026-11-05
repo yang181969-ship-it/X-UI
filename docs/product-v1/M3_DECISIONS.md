@@ -89,3 +89,22 @@
 
 - 已在**内存 libSQL** 上做过探针：`SUM` 溢出与分段求和、`typeof` 整数 CHECK、部分唯一索引、键字符集 GLOB、发布分类触发器、NOT NULL 断言回滚、删除守卫与用户级联共存。
 - **本地 D1 尚未验证任何一项**；M3-B1 必须完成 DATA_MODEL §10.13 / TEST_PLAN DB-M3-0 的全部探针，任一项不成立即停止并报告。
+
+## 8. M3-B3 决定索引（Q-B3-1 – Q-B3-12）
+
+M3-B3-A 只读分析提出的 12 个实施问题，经复审**全部按推荐方案批准**，并在 M3-B3-B.0 写入三份正式规格（2026-11-04）；B3-B、B3-C 据此实施，B3-D 完成验收（2026-11-05）。本节只是索引：规范性依据仍是 API_SPEC、DATA_MODEL、TEST_PLAN 中所列条文，二者不一致时以正式规格为准；它们不改变 P1–P9 或任何产品规则。§7 与文首状态行记录的是定稿时的状态，当前实施状态见三份规格的状态行。
+
+| # | 最终批准的决定 | 规范性条文 |
+|---|---|---|
+| Q-B3-1 | 更正请求不含 `type`：事实更正的 `ENTRY_SHAPE` 按已保存的交易类型判定，位于幂等查找与 404 → `TRANSACTION_VOIDED` → `REVISION_CONFLICT` 之后；同一键已成功使用后再提交形状违规的事实更正 → 409 `IDEMPOTENCY_CONFLICT` | API_SPEC §5.0.3、§5.1、§5.7.1；TEST_PLAN IDEM-13 |
+| Q-B3-2 | 更正 / 作废键在 `expires_at <= now` 时逻辑过期：查找视为不存在（不重放、不冲突）；每个财务写请求只读一次 `now`，键查找、S0、新键行时间与受控重试共用；物理删除只由该用户下一次写入的 S0 执行，键能否重新使用由 S0、门控 G 与主键决定；batch 后仍读到过期旧行 → 500 | API_SPEC §5.0.3、§5.8；DATA_MODEL §10.5、§10.10；TEST_PLAN IDEM-8、IDEM-14 |
+| Q-B3-3 | 补录金额与快照更正沿用上一版本的 `closedCurrencyAck`，并按保存时币种状态规范化（`active` → 0）；同账户同币种的沿用在任何 `recordMode` 下都不要求确认；同账户换为另一已关闭币种按新建规则处理 | API_SPEC §5.7.2；DATA_MODEL §10.4、§10.9.2、§10.9.4 R3；TEST_PLAN COR-1、COR-9、BF-4 |
+| Q-B3-4 | `TRANSACTION_VOIDED` 优先于 `REVISION_CONFLICT`，写入前检查与 batch 后的重新判定相同 | API_SPEC §5.1、§5.7.1、§5.8；DATA_MODEL §10.10；TEST_PLAN COR-5 |
+| Q-B3-5 | 事实更正的 `recordMode` 必填，不使用新建时的缺省值 | API_SPEC §5.7；TEST_PLAN COR-2 |
+| Q-B3-6 | 事实更正"无变化"的冻结定义：Event 事实字段与 Entry `(direction, accountId, currency, amountStatus, amount)` 的集合；`reason`、`closedCurrencyAck`、快照、小数位、分类与当前名称不参与 → 400 `VALIDATION`（单条 zod issue，`path: []`） | API_SPEC §5.7.1、§5.7.3；TEST_PLAN COR-2 |
+| Q-B3-7 | `GET /transactions/:id/revisions/:revision` 的参数须为规范十进制正整数，否则 400（只依赖请求，先于 404，他人交易同样）；格式合法但不可见 → 404 | API_SPEC §5.6；TEST_PLAN COR-8 |
+| Q-B3-8 | 受控重试只适用于事实更正：`LEDGER_CLASSIFICATION` 比较新账户（`account_at_save`）的法域，`LEDGER_CLOSED_CURRENCY` 比较不属于同账户同币种沿用的 Entry 的币种状态；来源未变 → 500；补录金额、快照更正与作废不重试 | API_SPEC §5.7.4；DATA_MODEL §10.10；TEST_PLAN CC-8、CC-9 |
+| Q-B3-9 | 依赖上一版本的补录金额 / 快照更正错误为 400 `VALIDATION`，沿用 zod issue 结构，`path` 指向请求字段 | API_SPEC §5.7.1；TEST_PLAN IDEM-13、COR-3 |
+| Q-B3-10 | 备注提交相同值仍写入并更新 `updatedAt`；`""` 原样保存，`null` 清除；未发布交易头 → 404 | API_SPEC §5.9；TEST_PLAN COR-7 |
+| Q-B3-11 | 补录金额与快照更正复制上一版本的小数位；事实更正按当前 ISO 4217 表写入 | API_SPEC §5.7.2；DATA_MODEL §10.9.2；TEST_PLAN COR-1、COR-10 |
+| Q-B3-12 | B3 分 B3-B（作废、备注、版本查看与公共幂等流程）、B3-C（三种更正）、B3-D（横向加固与文档）三个关卡，各自复审；任何一步都不修改 `0000` – `0002`、不新增 `0003` | TEST_PLAN §5.21 |
