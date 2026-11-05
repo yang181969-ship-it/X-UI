@@ -1,5 +1,15 @@
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
-import { IDEMPOTENCY_KEY_HEADER, type TransactionDto, type TransactionListDto, type TransactionListQuery, type TransactionNotesDto, type TransactionRevisionDto, type TransactionWriteResult } from '@xui/ledger-shared';
+import {
+  IDEMPOTENCY_KEY_HEADER,
+  type TransactionDto,
+  type TransactionListDto,
+  type TransactionListQuery,
+  type TransactionNotesDto,
+  type TransactionRevisionDto,
+  type TransactionSummaryDto,
+  type TransactionSummaryQuery,
+  type TransactionWriteResult,
+} from '@xui/ledger-shared';
 import { apiRequest, get, patch, qs } from './client.ts';
 
 /**
@@ -10,6 +20,10 @@ import { apiRequest, get, patch, qs } from './client.ts';
  * Read-only views show what the server returns: the saved facts and snapshots of a version, and,
  * separately, the current summaries of its accounts, card and channel. Nothing here classifies,
  * sums or converts.
+ *
+ * The summary (M3-B5-B) lives under the same prefix, so every create, correction (settlement
+ * included) and void — they all invalidate [TRANSACTIONS] — refreshes it; the notes PATCH only
+ * refreshes lists, since notes never change a statistic.
  */
 export const TRANSACTIONS = 'transactions';
 
@@ -22,6 +36,18 @@ export const useTransactionList = (filters: TransactionListQuery) =>
     queryFn: ({ pageParam }) => get<TransactionListDto>(`/transactions${qs({ ...filters, cursor: pageParam })}`),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (last) => last.nextCursor ?? undefined,
+    placeholderData: keepPreviousData,
+  });
+
+/**
+ * GET /transactions/summary (API_SPEC §5.10). The query is the key: each period is its own cache
+ * entry, so a slow answer for an earlier period can never show under a later one; the previous
+ * period's numbers stay visible (marked stale) while the next one loads.
+ */
+export const useTransactionSummary = (q: TransactionSummaryQuery) =>
+  useQuery({
+    queryKey: [TRANSACTIONS, 'summary', q],
+    queryFn: () => get<TransactionSummaryDto>(`/transactions/summary${qs(q)}`),
     placeholderData: keepPreviousData,
   });
 

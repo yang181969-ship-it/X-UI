@@ -517,6 +517,14 @@ export interface SummaryGroup {
 export interface TransactionSummaryDto {
   from: string | null;
   to: string | null;
+  /**
+   * Distinct active transactions (current version) with at least one entry matching the filters
+   * (date, type, currency), pending or confirmed — COUNT(DISTINCT), never a sum of group counts
+   * (M3-B5-B, M3_DECISIONS §9).
+   */
+  transactionCount: number;
+  /** Distinct active transactions (current version) with at least one PENDING entry matching the filters. */
+  pendingTransactionCount: number;
   /** Home regions saved in the period's transactions (more than one: the UI points it out). */
   homeRegions: string[];
   foreign: SummaryGroup[];

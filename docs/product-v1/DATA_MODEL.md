@@ -491,7 +491,7 @@ M3 的具体表名与其余字段在 M3 设计时确定；以下是 M2 对 M3 �
 ## 10. M3 数据模型（正式定义）
 
 > 依据：M3-A.2 为准，未覆盖处继承 M3-A.1、M3-A；P1–P9 已获用户批准（[M3_DECISIONS.md](M3_DECISIONS.md)）。产品规则见 PRODUCT_SPEC §7，接口见 API_SPEC §5，测试见 TEST_PLAN §5。本节是迁移 `0002_m3_transactions`（M3-B1）与写入服务（M3-B2、B3）的实施依据。
-> **验证状态**：§10.13 所列关键机制已由 M3-B1 在 libSQL 与本地 D1 上全部验证通过（DB-M3-0 探针 `test/m3-db-probe.test.ts`，约束与写入链 `m3-schema.test.ts`、`m3-chains.test.ts`）。**M3-B2 已实现**：§10.10 的新建写入链（`services/transactionWrite.ts`）与 batch 之后的路由处理、受控重试（`services/transactionCreate.ts`），列表与详情只读当前版本（§10.1），§10.11 L5 的 API 删除保护与账户删除审计同 batch。**M3-B3 已实现**：§10.10 的更正链与作废链（`correctChain` / `voidChain`，`services/transactionWrite.ts`）及其 batch 之后的路由处理（`services/transactionCorrect.ts`、`services/transactionVoid.ts`），只适用于事实更正的受控重试，§10.5 的逻辑过期、统一 `now` 与 S0 清理（`services/transactionIdempotency.ts`）；B3-D 在 libSQL 与本地 D1 上经 HTTP 验收了并发（门控 G、S1 / S3 条件与发布触发器决定结果，服务端无进程内锁）、31 天键生命周期、每一步的故障注入、跨操作的历史不可变，以及 DEL-2 静态测试（业务代码对四张 M3 表的删除只有 S0；M3 → M2 的外键恰为 §10.11 的四个 NO ACTION 外键，均由按全部版本与状态计数的 API 删除保护解释）。§10.12 统计待 M3-B5。§10.4、§10.5、§10.9、§10.10 已按 M3-B3-A 复审决定（Q-B3-2、Q-B3-3、Q-B3-4、Q-B3-8、Q-B3-11）在 M3-B3-B.0 细化：更正 / 作废键的逻辑过期与统一时间基准、各版本种类的字段继承（小数位、`closed_currency_ack`）、更正与作废链的写法、`TRANSACTION_VOIDED` 优先、受控重试的来源集合；迁移 `0002` 不变，不新增 `0003`。
+> **验证状态**：§10.13 所列关键机制已由 M3-B1 在 libSQL 与本地 D1 上全部验证通过（DB-M3-0 探针 `test/m3-db-probe.test.ts`，约束与写入链 `m3-schema.test.ts`、`m3-chains.test.ts`）。**M3-B2 已实现**：§10.10 的新建写入链（`services/transactionWrite.ts`）与 batch 之后的路由处理、受控重试（`services/transactionCreate.ts`），列表与详情只读当前版本（§10.1），§10.11 L5 的 API 删除保护与账户删除审计同 batch。**M3-B3 已实现**：§10.10 的更正链与作废链（`correctChain` / `voidChain`，`services/transactionWrite.ts`）及其 batch 之后的路由处理（`services/transactionCorrect.ts`、`services/transactionVoid.ts`），只适用于事实更正的受控重试，§10.5 的逻辑过期、统一 `now` 与 S0 清理（`services/transactionIdempotency.ts`）；B3-D 在 libSQL 与本地 D1 上经 HTTP 验收了并发（门控 G、S1 / S3 条件与发布触发器决定结果，服务端无进程内锁）、31 天键生命周期、每一步的故障注入、跨操作的历史不可变，以及 DEL-2 静态测试（业务代码对四张 M3 表的删除只有 S0；M3 → M2 的外键恰为 §10.11 的四个 NO ACTION 外键，均由按全部版本与状态计数的 API 删除保护解释）。§10.12 统计已由 M3-B5 实现（`services/transactionSummary.ts`，M3-B5-B 实现、M3-B5-C 验收，见 §10.12 末尾的实施说明）。§10.4、§10.5、§10.9、§10.10 已按 M3-B3-A 复审决定（Q-B3-2、Q-B3-3、Q-B3-4、Q-B3-8、Q-B3-11）在 M3-B3-B.0 细化：更正 / 作废键的逻辑过期与统一时间基准、各版本种类的字段继承（小数位、`closed_currency_ack`）、更正与作废链的写法、`TRANSACTION_VOIDED` 优先、受控重试的来源集合；迁移 `0002` 不变，不新增 `0003`。
 
 ### 10.1 总览与约定
 
@@ -927,6 +927,9 @@ GROUP BY …
 - 服务端合并：`BigInt(hi) × 10^9 + BigInt(lo)`，以十进制字符串（最小单位）返回。每行 `hi ≤ 999 999`、`lo ≤ 999 999 999`，同组超过 9.2×10⁹ 行 int64 才溢出（代码保留断言 `n < 9×10⁹`）。必须 `CAST AS TEXT`：D1 以 JS number（浮点）返回整数，libSQL 默认亦然。
 - 分组键始终包含 `funding_currency` 与 `currency_exponent`，不跨币种、不跨小数位合并；Event 金额从不参与统计。
 - 账户一侧的境内 / 境外由已保存快照在查询时推导：`en.funding_account_country <> ev.home_region`。
+- 实施说明（M3-B5，不改变上述口径，不新增索引或迁移）：
+  - 一次统计的四个读取（已确认金额分组、待补录分组、两个交易计数、`homeRegions`）放在**同一个只读 `db.batch()`** 中：libSQL 在同一连接上以 `BEGIN DEFERRED … COMMIT` 同步执行，D1 的 batch 即一个事务；结果来自同一数据库状态（`transactions-summary.test.ts` 在两个环境中于驱动层确认只有一次原生 batch、无其他读取，并在并发写入下核对结果自洽）。
+  - 查询计划：没有 `ANALYZE` 统计信息时，SQLite 会在有日期范围时以 `transaction_entries_user_account_idx (user_id=?)` 作内层循环，每个 Event 扫描该用户全部 Entry（1 万笔交易 40 – 65 秒）。因此 Entry 的两个用户条件写作一元 `+"transaction_entries"."user_id"`（不参与索引选择），Entry 只经 `event_id` 索引访问；条件仍逐行生效，用户 id 恒为 TEXT，比较语义不变。两个环境的测试固定：查询计划只经 `event_id` 访问 Entry；去掉 `+` 后每条语句返回相同的行；1 万笔交易约 60 – 110 ms。
 
 ### 10.13 迁移、实施与验证状态
 

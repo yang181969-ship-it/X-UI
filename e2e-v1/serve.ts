@@ -1,7 +1,7 @@
 /**
  * Starts the X-UI v1 production build (apps/ledger-web/dist served by apps/ledger-api) against a
  * throwaway database in data/e2e-v1/, so browser runs never touch data/x-ui-v1.db or the legacy
- * app. Seeds eleven users and a few fictional rows (the accounts, settings, cards, card-links, channels, transactions, transaction-form, lifecycle and recovery journeys have their own users).
+ * app. Seeds twelve users and a few fictional rows (the accounts, settings, cards, card-links, channels, transactions, transaction-form, lifecycle, recovery and overview journeys have their own users).
  */
 import { mkdirSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -29,6 +29,8 @@ import {
   LEDGER_SEED,
   LIFE_TOTP_SECRET,
   LIFE_USER,
+  OVERVIEW_TOTP_SECRET,
+  OVERVIEW_USER,
   RECOVER_TOTP_SECRET,
   RECOVER_USER,
   E2E_V1_PORT,
@@ -265,10 +267,11 @@ await db.insert(cards).values([
 ]);
 await db.insert(accountCardLinks).values({ id: newId(now), userId: crUser.id, cardId: crLinked, accountId: crHk, role: 'spending_source', isDefault: true, createdAt: now, updatedAt: now });
 
-// The lifecycle and recovery journeys' users: the same fictional accounts each; transactions come through the API.
+// The lifecycle, recovery and overview journeys' users: the same fictional accounts each; transactions come through the API.
 for (const [user, secret] of [
   [LIFE_USER, LIFE_TOTP_SECRET],
   [RECOVER_USER, RECOVER_TOTP_SECRET],
+  [OVERVIEW_USER, OVERVIEW_TOTP_SECRET],
 ] as const) {
   const u = await activate(user, secret);
   const [bank, emi, hk, us, cn] = [newId(now), newId(now), newId(now), newId(now), newId(now)];

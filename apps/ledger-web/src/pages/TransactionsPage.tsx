@@ -153,8 +153,8 @@ export function TransactionsPage() {
   );
 }
 
-/** One transaction as a card (narrow screens). */
-function TxnCard({ txn, onOpen }: { txn: TransactionListItem; onOpen: () => void }) {
+/** One transaction as a card (narrow screens; also the overview's recent list). */
+export function TxnCard({ txn, onOpen }: { txn: TransactionListItem; onOpen: () => void }) {
   const { t } = useTranslation();
   return (
     <div

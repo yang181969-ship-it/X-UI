@@ -1,7 +1,7 @@
 # X-UI Product v1 — API 规格（API_SPEC）
 
 > 状态：§2 为 M1 已实现接口；§3 起为 M2 设计（M2-A 修订版，含 M2-B1 加固）。**§3.2 金融机构已在 M2-B2.1 实现，§3.3 账户已在 M2-B2.2 实现，§3.1 个人设置已在 M2-B2.3 实现，§3.4 银行卡的 CRUD 已在 M2-B3 实现，§3.5 银行卡-账户关联与 §3.4.1 `spending-source` 推荐已在 M2-B4 实现，§3.6 支付渠道及其资金来源已在 M2-B5 实现**（M2 全部接口已实现）。
-> **§5 为 M3 交易接口的定稿规格**（P1–P9 已获用户批准，见 [M3_DECISIONS.md](M3_DECISIONS.md)）。**M3-B2 已实现** `POST /transactions`（§5.0、§5.4，路由级幂等）、`GET /transactions`（§5.3）、`GET /transactions/:id`（§5.5）与 §5.12 对 M2 删除接口的影响；**M3-B3 已实现** `GET /transactions/:id/revisions/:revision`（§5.6）、`POST /transactions/:id/revisions`（§5.7，`settlement` / `fact_correction` / `snapshot_correction`）、`POST /transactions/:id/void`（§5.8）与 `PATCH /transactions/:id/notes`（§5.9）：B3-B（作废、备注、版本查看与财务写的公共幂等流程）、B3-C（三种更正）实现，B3-D 以 HTTP 并发、31 天键生命周期、故障注入、原始字节重放与 DEL-2 静态测试完成验收（TEST_PLAN §5.21）；迁移 `0000` – `0002` 不变，无 `0003`。`GET /transactions/summary` 待 M3-B5（届时须注册在 `/:id` 之前）。§5.0.3、§5.1、§5.2、§5.3、§5.4、§5.12 已按 M3-B2-A 复审决定（Q1–Q10）在 M3-B2.0 细化：错误判定顺序、数据库错误与 HTTP 错误的边界、受控重试、已关闭币种确认的保存、规范化搜索的分页、删除保护的响应结构；§5.2 的 `card` 摘要在 M3-B2 复审中补列 `cardType`（与共享 `CardSummary` 一致）。§5.0.1、§5.0.3、§5.1、§5.6 – §5.9 已按 M3-B3-A 复审决定（Q-B3-1 – Q-B3-12）在 M3-B3-B.0 细化：更正与作废的判定顺序、更正 / 作废键的逻辑过期与统一时间基准、三种版本的字段继承、事实更正的形状校验与无变化判断、版本参数校验、备注相同值的处理（不新增接口、不改变产品规则）。
+> **§5 为 M3 交易接口的定稿规格**（P1–P9 已获用户批准，见 [M3_DECISIONS.md](M3_DECISIONS.md)）。**M3-B2 已实现** `POST /transactions`（§5.0、§5.4，路由级幂等）、`GET /transactions`（§5.3）、`GET /transactions/:id`（§5.5）与 §5.12 对 M2 删除接口的影响；**M3-B3 已实现** `GET /transactions/:id/revisions/:revision`（§5.6）、`POST /transactions/:id/revisions`（§5.7，`settlement` / `fact_correction` / `snapshot_correction`）、`POST /transactions/:id/void`（§5.8）与 `PATCH /transactions/:id/notes`（§5.9）：B3-B（作废、备注、版本查看与财务写的公共幂等流程）、B3-C（三种更正）实现，B3-D 以 HTTP 并发、31 天键生命周期、故障注入、原始字节重放与 DEL-2 静态测试完成验收（TEST_PLAN §5.21）；迁移 `0000` – `0002` 不变，无 `0003`。`GET /transactions/summary` 待 M3-B5（届时须注册在 `/:id` 之前）。§5.0.3、§5.1、§5.2、§5.3、§5.4、§5.12 已按 M3-B2-A 复审决定（Q1–Q10）在 M3-B2.0 细化：错误判定顺序、数据库错误与 HTTP 错误的边界、受控重试、已关闭币种确认的保存、规范化搜索的分页、删除保护的响应结构；§5.2 的 `card` 摘要在 M3-B2 复审中补列 `cardType`（与共享 `CardSummary` 一致）。§5.0.1、§5.0.3、§5.1、§5.6 – §5.9 已按 M3-B3-A 复审决定（Q-B3-1 – Q-B3-12）在 M3-B3-B.0 细化：更正与作废的判定顺序、更正 / 作废键的逻辑过期与统一时间基准、三种版本的字段继承、事实更正的形状校验与无变化判断、版本参数校验、备注相同值的处理（不新增接口、不改变产品规则）。**M3-B5 已实现** `GET /transactions/summary`（§5.10，含经批准的 `transactionCount` / `pendingTransactionCount` 与筛选语义，M3_DECISIONS §9；M3-B5-B 实现、M3-B5-C 验收），§5 的接口已全部实现。
 > 相关文档：[PRODUCT_SPEC.md](PRODUCT_SPEC.md) · [DATA_MODEL.md](DATA_MODEL.md) · [TEST_PLAN.md](TEST_PLAN.md) · [M3_DECISIONS.md](M3_DECISIONS.md)
 
 ## 1. 通用约定
@@ -657,6 +657,7 @@ type TransactionDto = {
 
 - 查询参数（严格校验）：`from`、`to`（可选，按 `occurredOn`）、`type`、`currency`。
 - 只统计 `active` 交易当前版本中 `confirmed` 的 Entry；作废、被取代版本与待补录金额不计入；Event 金额不参与；不跨币种合计（DATA_MODEL §10.12）。
+- 筛选语义（M3-B5-B，用户批准）：`from`、`to` 均**包含当天**（与 §5.3 列表一致）；`type` 对金额分组、`pending`、两个交易计数与 `homeRegions` 统一生效；`currency` 只筛选该币种的 **Entry**（同一交易其他币种的 Entry 不返回、不计入）。
 - 响应：
 
 ```ts
@@ -669,6 +670,8 @@ type SummaryGroup = {
 };
 type TransactionSummaryDto = {
   from: string | null; to: string | null;
+  transactionCount: number;                // M3-B5-B：见下文
+  pendingTransactionCount: number;         // M3-B5-B：见下文
   homeRegions: string[];                   // 期间内交易保存时的本国地区（多于一个时界面提示）
   foreign: SummaryGroup[]; undetermined: SummaryGroup[]; domestic: SummaryGroup[];   // domestic 在 P2 下恒为空
   pending: { foreignStatus: 'foreign' | 'domestic' | 'undetermined'; txnType: TxnType; direction: 'out' | 'in';
@@ -676,6 +679,14 @@ type TransactionSummaryDto = {
 };
 ```
 三块互不合并；消费与退款、汇出与到账、本人调拨与第三方汇款分组列出，不相加。
+
+交易计数（M3-B5-B，用户批准的 DTO 增量扩展，M3_DECISIONS §9）：
+- `transactionCount`：当前用户、当前筛选（日期、`type`、`currency`）下，至少有一条符合条件的 Entry（`pending` 或 `confirmed`）的 `active` 交易数，按当前版本，`COUNT(DISTINCT 交易)`；作废交易与被取代版本不计。
+- `pendingTransactionCount`：同一范围内至少有一条符合条件的 `pending` Entry 的交易数，`COUNT(DISTINCT 交易)`；一笔交易有多条待补录 Entry 也只计一次。
+- 两者由服务端计算；`SummaryGroup.count` / `pending[].count` 是该组的 Entry 数，不得相加得出交易数（两侧都已登记的本人调拨在 out、in 两组各出现一次）。
+- `homeRegions`：同一范围（含只有待补录 Entry 的交易）中各交易当前版本保存的 `home_region` 去重，按字母排序。
+- 一致性：金额分组、`pending`、两个计数与 `homeRegions` 在同一个只读 `db.batch()` 中读取（libSQL 与 D1 都作为一个事务执行），来自同一数据库状态。
+- 分组顺序（实现约定）：类型 → 方向（out 在前）→ 币种 → 小数位 → 商户一侧 → 转账细分 → 账户一侧；`pending` 先按三态（foreign、undetermined、domestic）。
 
 ### 5.11 审计
 

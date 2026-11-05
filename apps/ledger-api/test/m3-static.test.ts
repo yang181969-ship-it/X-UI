@@ -89,11 +89,31 @@ describe('DEL-2 and the history guarantees, statically', () => {
     expect(definition(file('services/transactionNotes.ts'), 'updateNotes').replace(/\s+/g, ' ')).toMatch(/\.update\(transactions\)\s?\.set\(\{ notes(: notes)?, updatedAt: (\w+\.)?now \}\)/);
   });
 
-  it('no route deletes or replaces a transaction: /api/transactions has exactly the create, read, correct, void and notes routes', () => {
+  it('no route deletes or replaces a transaction: /api/transactions has exactly the create, read, summary, correct, void and notes routes', () => {
     const routes = t.app.routes.filter((r) => r.path.startsWith('/api/transactions') && r.method !== 'ALL').map((r) => `${r.method} ${r.path}`);
     expect([...new Set(routes)].sort()).toEqual(
-      ['GET /api/transactions', 'POST /api/transactions', 'GET /api/transactions/:id', 'GET /api/transactions/:id/revisions/:revision', 'POST /api/transactions/:id/revisions', 'POST /api/transactions/:id/void', 'PATCH /api/transactions/:id/notes'].sort(),
+      [
+        'GET /api/transactions',
+        'POST /api/transactions',
+        'GET /api/transactions/summary',
+        'GET /api/transactions/:id',
+        'GET /api/transactions/:id/revisions/:revision',
+        'POST /api/transactions/:id/revisions',
+        'POST /api/transactions/:id/void',
+        'PATCH /api/transactions/:id/notes',
+      ].sort(),
     );
+    // M3-B5-B: /summary is registered before the dynamic /:id (API_SPEC §5).
+    expect(routes.indexOf('GET /api/transactions/summary')).toBeLessThan(routes.indexOf('GET /api/transactions/:id'));
+  });
+
+  it('SUM-3: no floating-point aggregate anywhere in the server (no TOTAL( or AVG(); summary amounts are merged segment text', () => {
+    for (const [f, text] of files) expect(text, f).not.toMatch(/\b(TOTAL|AVG)\s*\(/i);
+    const summary = file('services/transactionSummary.ts');
+    expect(summary).toMatch(/CAST\(SUM\(\$\{EN_AMOUNT\} \/ \$\{SEGMENT\}\) AS TEXT\)/);
+    expect(summary).toMatch(/CAST\(SUM\(\$\{EN_AMOUNT\} % \$\{SEGMENT\}\) AS TEXT\)/);
+    expect(summary).toMatch(/mergeSegmentedSum\(hi, lo\)/);
+    expect(summary).not.toMatch(/SUM\("transaction_entries"\."amount"\)|SUM\(\$\{EN_AMOUNT\}\)/);
   });
 
   it('the foreign keys from M3 to M2 data are exactly four NO ACTION keys, each explained by its M2 delete path with a count over every version and status; users cascade', async () => {

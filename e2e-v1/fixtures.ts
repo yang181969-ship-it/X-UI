@@ -178,6 +178,9 @@ export const LIFE_USER = { username: 'lifecycle', password: 'e2e v1 lifecycle pa
 export const LIFE_TOTP_SECRET = 'NRUWMZLDPFRWYZJAORSXG5DFOJXGK4TB';
 export const RECOVER_USER = { username: 'recovery', password: 'e2e v1 recovery password', displayName: '恢复测试用户' };
 export const RECOVER_TOTP_SECRET = 'OJSWG33WMVZHSIDUMVZXI2LOM5SXEYLC';
+/** The overview journey (M3-B5-B): the same fictional accounts; its transactions come through the API. */
+export const OVERVIEW_USER = { username: 'overview', password: 'e2e v1 overview password', displayName: '总览测试用户' };
+export const OVERVIEW_TOTP_SECRET = 'N5WGK4TWNFSXOIDFGJSSA5LTMVZCA4ZT';
 export const LEDGER_SEED = {
   bank: '示例生命周期银行',
   emi: '示例生命周期支付机构',
