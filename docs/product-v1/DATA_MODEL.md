@@ -491,7 +491,7 @@ M3 的具体表名与其余字段在 M3 设计时确定；以下是 M2 对 M3 �
 ## 10. M3 数据模型（正式定义）
 
 > 依据：M3-A.2 为准，未覆盖处继承 M3-A.1、M3-A；P1–P9 已获用户批准（[M3_DECISIONS.md](M3_DECISIONS.md)）。产品规则见 PRODUCT_SPEC §7，接口见 API_SPEC §5，测试见 TEST_PLAN §5。本节是迁移 `0002_m3_transactions`（M3-B1）与写入服务（M3-B2、B3）的实施依据。
-> **验证状态**：§10.13 所列关键机制已由 M3-B1 在 libSQL 与本地 D1 上全部验证通过（DB-M3-0 探针 `test/m3-db-probe.test.ts`，约束与写入链 `m3-schema.test.ts`、`m3-chains.test.ts`）。**M3-B2 已实现**：§10.10 的新建写入链（`services/transactionWrite.ts`）与 batch 之后的路由处理、受控重试（`services/transactionCreate.ts`），列表与详情只读当前版本（§10.1），§10.11 L5 的 API 删除保护与账户删除审计同 batch；更正、作废链待 M3-B3，§10.12 统计待 M3-B5。
+> **验证状态**：§10.13 所列关键机制已由 M3-B1 在 libSQL 与本地 D1 上全部验证通过（DB-M3-0 探针 `test/m3-db-probe.test.ts`，约束与写入链 `m3-schema.test.ts`、`m3-chains.test.ts`）。**M3-B2 已实现**：§10.10 的新建写入链（`services/transactionWrite.ts`）与 batch 之后的路由处理、受控重试（`services/transactionCreate.ts`），列表与详情只读当前版本（§10.1），§10.11 L5 的 API 删除保护与账户删除审计同 batch；更正、作废链待 M3-B3，§10.12 统计待 M3-B5。§10.4、§10.5、§10.9、§10.10 已按 M3-B3-A 复审决定（Q-B3-2、Q-B3-3、Q-B3-4、Q-B3-8、Q-B3-11）在 M3-B3-B.0 细化：更正 / 作废键的逻辑过期与统一时间基准、各版本种类的字段继承（小数位、`closed_currency_ack`）、更正与作废链的写法、`TRANSACTION_VOIDED` 优先、受控重试的来源集合；迁移 `0002` 不变，不新增 `0003`。
 
 ### 10.1 总览与约定
 
@@ -617,7 +617,7 @@ CHECK：`(status = 'voided') = (voided_at IS NOT NULL)`；`(status = 'voided') =
 | funding_account_country | text | 否 | | **快照**：该账户的 `account_country`，`GLOB '[A-Z][A-Z]'` |
 | country_source | text | 否 | | `CHECK IN ('account_at_save','carried','user_corrected')`；`CHECK((carried_from_entry_id IS NULL) = (country_source = 'account_at_save'))`：未沿用的 Entry 取保存时账户法域，沿用的 Entry 只能是 `carried` 或 `user_corrected` |
 | currency_status_at_save | text | 否 | | `CHECK IN ('active','closed')`：**保存时**该账户币种的状态（不是交易发生时的状态） |
-| closed_currency_ack | integer | 否 | 0 | `CHECK IN (0,1)`；`CHECK(closed_currency_ack = 0 OR currency_status_at_save = 'closed')`。确认是使用已关闭币种的**许可**，不是状态事实（M3-B2.0 Q3）：写入值由写入语句按保存时的币种状态决定，`CASE WHEN ac.status = 'closed' THEN :ack ELSE 0 END`——币种实际为 `active` 时保存 0（即使请求带 `closedCurrencyAck: true`），实际为 `closed` 时按 §10.9.4 R3 处理；请求哈希仍按请求体计算（API_SPEC §5.0.3），不因这一写入规则而改变 |
+| closed_currency_ack | integer | 否 | 0 | `CHECK IN (0,1)`；`CHECK(closed_currency_ack = 0 OR currency_status_at_save = 'closed')`。确认是使用已关闭币种的**许可**，不是状态事实（M3-B2.0 Q3）：写入值由写入语句按保存时的币种状态决定，`CASE WHEN ac.status = 'closed' THEN :ack ELSE 0 END`——币种实际为 `active` 时保存 0（即使请求带 `closedCurrencyAck: true`），实际为 `closed` 时按 §10.9.4 R3 处理；请求哈希仍按请求体计算（API_SPEC §5.0.3），不因这一写入规则而改变。补录金额与快照更正的请求不含确认字段（M3-B3-B.0，Q-B3-3）：写入值 = `CASE WHEN ac.status = 'closed' THEN <被沿用 Entry 的 closed_currency_ack> ELSE 0 END`，即沿用上一版本的值并按保存时状态规范化；这类 Entry 使用已关闭币种的依据是沿用（§10.9.4 R3 b），不依赖 `closed_currency_ack = 1` |
 | carried_from_entry_id | text | 是 | | 被沿用的上一版本 Entry；`(carried_from_entry_id, user_id)` → transaction_entries（NO ACTION） |
 | created_at | integer | 否 | | |
 
@@ -645,6 +645,8 @@ CHECK：`(status = 'voided') = (voided_at IS NOT NULL)`；`(status = 'voided') =
 | expires_at | integer | 是 | 新建为 NULL（**永久保留**）；更正、作废为 `created_at + 30 天`；`CHECK((operation = 'transaction.create') = (expires_at IS NULL))`；`CHECK(expires_at IS NULL OR expires_at > created_at)` |
 
 主键 `(user_id, key)`；`INDEX(user_id, expires_at)`。
+
+**逻辑过期**（M3-B3-B.0，Q-B3-2）：`expires_at IS NOT NULL AND expires_at <= now` 的键行已逻辑过期——API 查找时视为不存在（不重放、不报冲突，API_SPEC §5.0.3）；物理删除只由该用户下一次财务写 batch 的 S0 执行（§10.10）。同一请求的键查找、S0 条件与新键行的 `created_at` / `expires_at` 使用同一个服务端时间 `now`，因此"查找时已过期"的键行必然在同一请求的 S0 中被删除，门控 G 随后才成立；服务层不能仅凭忽略键行就认为键可以重新使用。表结构、CHECK 与触发器不变。
 
 ### 10.6 M3 复合外键矩阵
 
@@ -779,6 +781,11 @@ CHECK：`(status = 'voided') = (voided_at IS NOT NULL)`；`(status = 'voided') =
 
 - 修改设置、修改账户 `account_country`、结束或删除关联、修改分类代码，**都不会**生成新版本或改变已发布版本（自动重分类禁止，§3.0）。快照更正不提供批量操作。
 - 每个版本以 `baseRevision` 乐观并发：只能基于当前版本生成下一版本。作废为终态；类型录错时作废后新建。
+- 作废不是版本：只更新交易头（形态③），不插入 Event 或 Entry，`current_revision` 不变；作废前的全部版本照常可读，其 Entry、Event 对账户、账户币种、银行卡、支付渠道的引用继续生效（§10.11 L5）。
+- 字段继承（M3-B3-B.0，Q-B3-3、Q-B3-11；逐字段表见 API_SPEC §5.7.2）：
+  - `settlement`、`snapshot_correction`：Event 的事实列、`event_currency_exponent` 与 `classifier_version` 由写入语句从上一版本**复制**，各 Entry 的 `funding_account_id`、`funding_currency`、`currency_exponent`（及 `settlement` 时的 `funding_account_country`、`snapshot_correction` 时的 `amount`、`amount_status`）从被沿用的 Entry 复制；小数位**不**按 ISO 表重新计算（`ev_kind_guard`、`en_kind_guard` 比较这些列）。`closed_currency_ack` 见 §10.4。
+  - `fact_correction`：事实为请求值；小数位按当前固定的 ISO 4217 表写入（与新建相同）；`home_region` 恒为上一版本的值（`carried`），包括补录时用户声明的值——事实更正不能改变本国地区声明，只有快照更正可以；同账户的 Entry 沿用法域快照。
+  - 三种版本的 `currency_status_at_save` 都在写入语句中由 `account_currencies` 重新读取（保存时状态，R5），不从上一版本复制。
 
 #### 10.9.3 沿用规则
 
@@ -790,7 +797,7 @@ CHECK：`(status = 'voided') = (voided_at IS NOT NULL)`；`(status = 'voided') =
 |---|---|
 | R1 | `record_mode ∈ ('current','backfill')` 是**用户声明**；系统不证实交易确实发生，也不证实发生时账户、币种、银行卡的状态；不按日期强制判定（P6），界面在发生日早于 30 天或所选账户 / 币种非有效状态时提示 |
 | R2 | 扣款币种须是该账户已登记的币种（复合外键）；状态不限 |
-| R3 | 已关闭币种只在以下情形可用：(a) 所属版本 `record_mode = 'backfill'` 且该 Entry `closed_currency_ack = 1`（用户逐条确认）；(b) 沿用：`carried_from_entry_id` 指向的 Entry 为同一账户、同一 `funding_currency`。否则拒绝（`en_closed_currency`）。这是对 PRODUCT_SPEC §6.1 第 5 条的批准例外；`current` 模式的新 Entry 仍须为有效币种 |
+| R3 | 已关闭币种只在以下情形可用：(a) 所属版本 `record_mode = 'backfill'` 且该 Entry `closed_currency_ack = 1`（用户逐条确认）；(b) 沿用：`carried_from_entry_id` 指向的 Entry 为同一账户、同一 `funding_currency`。否则拒绝（`en_closed_currency`）。这是对 PRODUCT_SPEC §6.1 第 5 条的批准例外；`current` 模式的新 Entry 仍须为有效币种。(b) 的沿用在任何 `record_mode` 下都不要求、也不依赖 `closed_currency_ack = 1`（M3-B3-B.0，Q-B3-3）；同账户换为另一已关闭币种不属于 (b)，须满足 (a) |
 | R4 | 账户上没有登记的币种不能使用；用户可先经 `PUT /accounts/:id/currencies` 添加（可直接以 `closed` 状态添加）。系统只记录"账户有过该币种"，不推断开通或关闭日期 |
 | R5 | `currency_status_at_save` 只表示**保存时**的状态；界面标为"保存时状态"，不得表述为交易时状态。账户、银行卡、渠道任何状态均可用，不保存其状态快照 |
 | R6 | 补录可声明当时的本国地区（`user_declared`，P4）；不声明时取保存时的设置值 |
@@ -827,6 +834,11 @@ S2 的 `merchant_scope`（M3-B2-B.1 实施说明）：`merchant_scope` 与 `home
 
 S3–S5 中的 `EXISTS (Event E)` 必不可少：若 r+1 由更早的另一请求生成，本次的 `E` 不存在，这些语句不得把他人的结果算作本次。
 
+更正链的写法（M3-B3-B.0；字段继承见 §10.9.2）：
+- S1：`settlement`、`snapshot_correction` 的事实列、`event_currency_exponent`、`classifier_version` 从 `prev` 选取（SQL 复制，不绑定）；`fact_correction` 的事实列为绑定值，`classifier_version` 仍取 `prev`。`home_region` 为 `prev.home_region`（`carried`）或快照更正的绑定值（`user_corrected`）。`merchant_scope` 与新建 S2 相同，在本语句中由写入的 `home_region` 推导；`transfer_scope`、`foreign_status` 为服务端计算的绑定值（C6 验证）。
+- S2：沿用的 Entry `INSERT … SELECT … FROM transaction_events e JOIN transaction_entries c（被沿用的上一版本 Entry）JOIN account_currencies ac`，`funding_account_id` 取 `c`，`funding_account_country` 取 `c`（`carried`）或绑定的更正值（`user_corrected`），`carried_from_entry_id = c.id`；`settlement`、`snapshot_correction` 的 `funding_currency`、`currency_exponent`（及按种类不变的金额列）取 `c`；`closed_currency_ack` 见 §10.4（补录与快照更正沿用 `c` 的值并按 `ac.status` 规范化）。新账户的 Entry 与新建 S3 相同（`account_at_save`）。所有父行都按 `:u` 限定。
+- 写入前（API，API_SPEC §5.7.1）：读取交易头与版本 r 及其 Entry（不可变）；已作废 → `TRANSACTION_VOIDED`，`current_revision ≠ r` → `REVISION_CONFLICT`；沿用映射按 `funding_account_id` 由服务端确定（§10.9.3）。
+
 **作废（void，基于版本 r）**
 
 | 步骤 | 语句 | 条件 |
@@ -836,6 +848,8 @@ S3–S5 中的 `EXISTS (Event E)` 必不可少：若 r+1 由更早的另一请�
 | S2 | 审计 `transaction.void`（`{id, eventId, revision}`） | `id = :T AND voided_op_id = O` |
 | S3 | 键行：子查询均要求 `voided_op_id = O`；`result_revision` = 当前版本，`result_event_id` = 当前版本的 Event；`response_status = 200`；`expires_at = :now + 30 天` | `G` |
 
+作废不插入 Event 或 Entry，不改变 `current_revision`（形态③）；作废不读取任何快照来源，没有受控重试，batch 中的任何 `LEDGER_*` → 500。写入前：交易头不可见 → 404，已作废 → `TRANSACTION_VOIDED`，`current_revision ≠ r` → `REVISION_CONFLICT`（M3-B3-B.0）。
+
 **batch 之后的路由处理**（M3-B2.0 修订，细化 TEST_PLAN ISO-6）
 
 - 数据库错误（`LEDGER_*`、外键、CHECK、UNIQUE、键行 NOT NULL）只在服务端用于判断原因，**不直接决定 HTTP 结果，也从不进入响应**：响应不含 SQL、表名、列名、约束名、触发器文字或任何 id；原始错误只写服务端日志。
@@ -844,9 +858,9 @@ S3–S5 中的 `EXISTS (Event E)` 必不可少：若 r+1 由更早的另一请�
 | 结果 | 处理 |
 |---|---|
 | 已提交，键行 `op_id = O` | 本次成功：以 `result_revision`、`result_event_id` 构建 `TransactionWriteResult`（API_SPEC §5.2，只含不可变数据） |
-| 已提交，键行 `op_id ≠ O`（门控 G 不成立）；或键表主键 UNIQUE 失败 | 键已被先前请求使用：读取该键行，用其 `hash_version` 对应的算法计算本请求的哈希——相同 → 重放该不可变结果；不同 → 409 `IDEMPOTENCY_CONFLICT`（`details` 只含该键行的 `operation`、`transactionId`）；`hash_version` 是本服务未知的版本 → 500 `INTERNAL`（既不重放也不视为冲突） |
+| 已提交，键行 `op_id ≠ O`（门控 G 不成立）；或键表主键 UNIQUE 失败 | 键已被先前请求使用：读取该键行，用其 `hash_version` 对应的算法计算本请求的哈希——相同 → 重放该不可变结果；不同 → 409 `IDEMPOTENCY_CONFLICT`（`details` 只含该键行的 `operation`、`transactionId`）；`hash_version` 是本服务未知的版本 → 500 `INTERNAL`（既不重放也不视为冲突）；读到的键行按本请求的 `now` 已逻辑过期（§10.5，说明 S0 未删除它）→ 不变式被破坏，500 `INTERNAL`，不重放、不视为冲突 |
 | 已提交，但读不到当前用户的该键行 | 不变式被破坏 → 500 `INTERNAL` |
-| 键行某列 NOT NULL 失败，或复合外键失败 | 操作未完整生效，已整体回滚。以当前用户重新读取本请求引用的交易、账户、账户币种、银行卡、支付渠道：有不可见的（他人的或不存在）→ 404 `NOT_FOUND`（与写入前检查相同的响应体，无 `details`）；（更正、作废）已作废 → 409 `TRANSACTION_VOIDED`，版本已变 → 409 `REVISION_CONFLICT`（`details.currentRevision`）；币种未登记于该账户 → 400 `CURRENCY_NOT_ON_ACCOUNT`（`details.status = null`）；重新读取不能解释失败 → 500 `INTERNAL`。**外键失败不一律视为 404** |
+| 键行某列 NOT NULL 失败，或复合外键失败 | 操作未完整生效，已整体回滚。以当前用户重新读取本请求引用的交易、账户、账户币种、银行卡、支付渠道：有不可见的（他人的或不存在）→ 404 `NOT_FOUND`（与写入前检查相同的响应体，无 `details`）；（更正、作废）已作废 → 409 `TRANSACTION_VOIDED`，版本已变 → 409 `REVISION_CONFLICT`（`details.currentRevision`），二者同时成立时为 `TRANSACTION_VOIDED`（M3-B3-B.0，Q-B3-4）；币种未登记于该账户 → 400 `CURRENCY_NOT_ON_ACCOUNT`（`details.status = null`）；重新读取不能解释失败 → 500 `INTERNAL`。**外键失败不一律视为 404** |
 | `LEDGER_CLASSIFICATION`、`LEDGER_CLOSED_CURRENCY` | **受控重试的候选**，不直接映射为 `CONCURRENT_CHANGE`：只有按下文"受控重试"确认相应来源确已变化时才重试一次；来源未变 → 500 `INTERNAL` |
 | `LEDGER_SNAPSHOT_SOURCE` 以及其他按服务端构造不可达的守卫错误（`LEDGER_HEADER_INSERT`、`LEDGER_HEADER_IMMUTABLE`、`LEDGER_VOIDED`、`LEDGER_REVISION_ORDER`、`LEDGER_ENTRY_COUNT`、`LEDGER_OWN_TRANSFER_SHAPE`、`LEDGER_EVENT_AMOUNT`、`LEDGER_CONFIRMED_DOMESTIC`、`LEDGER_IMMUTABLE`、`LEDGER_REVISION_KIND`、`LEDGER_KEY_IMMUTABLE`、`LEDGER_NO_DELETE`）、CHECK、键表主键以外的 UNIQUE、其他数据库错误 | 500 `INTERNAL`，通用消息。理由：快照只由写入语句内的 SQL 读取（§10.9.1），触发器在同一语句中读到相同的值，并发修改不会造成快照来源不符；Entry 形状、Event 金额、已确认纯境内、版本顺序在写入之前已由 API 按相同规则拒绝（API_SPEC §5.0.3、§5.4），写入语句以条件选取避免版本竞争触发守卫；出现这些错误说明服务端实现与数据库规则不一致，不归咎于请求 |
 | 结果未知（网络中断、超时、连接重置等，无法确定 batch 是否已提交） | 服务端不重试，返回 500 `INTERNAL`；客户端以同一 `Idempotency-Key` 重试，经幂等查找恢复：已提交 → 重放首次结果，未提交 → 重新执行 |
@@ -854,9 +868,9 @@ S3–S5 中的 `EXISTS (Event E)` 必不可少：若 r+1 由更早的另一请�
 **受控重试**（每个请求至多一次）：
 
 1. **候选**：错误为 `LEDGER_CLASSIFICATION`（发布时由已保存快照推导的分类与写入值不一致），或 `LEDGER_CLOSED_CURRENCY`。
-2. **确认来源确已变化**：以当前用户重新读取对应的来源，与本次写入前预读并用于计算的值逐项比较——`LEDGER_CLASSIFICATION`：本国地区设置（仅 `preference_at_save` 时；`user_declared`、`carried`、`user_corrected` 不会变化）与各新账户 Entry（未沿用的 Entry）的 `account_country`；`LEDGER_CLOSED_CURRENCY`：各新账户 Entry 的账户币种状态。没有任何一项不同 → 不是并发修改，500 `INTERNAL`。（按 §10.4 的确认写法，币种在预读后被重新开启只会使确认保存为 0，不会造成 CHECK 失败，不需要重试。）
-3. **确认已完整回滚**：只有数据库在语句执行中明确报告的约束或 `RAISE` 错误才可能成为候选——这类错误使整个 batch 回滚；结果未知的错误不重试（见上表）。重新写入之前再按 `(user_id, key)` 查找一次键行：已存在 → 按重放 / 冲突处理，不再写入。
-4. **重新执行**：沿用同一 `Idempotency-Key`、同一 `request_hash` 与 `hash_version`（首次计算的值；不重新解析请求体、不重新计算哈希），重新执行完整的归属检查、预检查（可能因此得到 400 / 404，例如币种已关闭、交易已成为纯境内）与写入 batch；T、E、各 Entry id、O、A 全部重新生成。第一次尝试没有留下任何行，因此不会产生第二笔交易或第二个版本。
+2. **确认来源确已变化**：以当前用户重新读取对应的来源，与本次写入前预读并用于计算的值逐项比较——`LEDGER_CLASSIFICATION`：本国地区设置（仅 `preference_at_save` 时；`user_declared`、`carried`、`user_corrected` 不会变化）与各新账户 Entry（未沿用的 Entry）的 `account_country`；`LEDGER_CLOSED_CURRENCY`：各新账户 Entry 的账户币种状态。没有任何一项不同 → 不是并发修改，500 `INTERNAL`。更正中的来源集合（M3-B3-B.0，Q-B3-8）：只有 `fact_correction` 是候选——`LEDGER_CLASSIFICATION` 比较 `country_source = 'account_at_save'` 的 Entry 的 `account_country`（`home_region` 为 `carried`，不会并发变化）；`LEDGER_CLOSED_CURRENCY` 比较所有不属于同账户同币种沿用（R3 b）的 Entry 的账户币种状态，包括新账户的 Entry 与同账户但换了币种的 Entry。`settlement`、`snapshot_correction` 与作废的快照来源全部是不可变的上一版本或请求值，任何 `LEDGER_*` → 500，不重试。（按 §10.4 的确认写法，币种在预读后被重新开启只会使确认保存为 0，不会造成 CHECK 失败，不需要重试。）
+3. **确认已完整回滚**：只有数据库在语句执行中明确报告的约束或 `RAISE` 错误才可能成为候选——这类错误使整个 batch 回滚；结果未知的错误不重试（见上表）。重新写入之前再按 `(user_id, key)` 查找一次键行（同样按本请求的 `now` 判断逻辑过期，§10.5）：已存在且未过期 → 按重放 / 冲突处理，不再写入。
+4. **重新执行**：沿用同一 `Idempotency-Key`、同一 `request_hash` 与 `hash_version`（首次计算的值；不重新解析请求体、不重新计算哈希）以及同一个请求时间 `now`（§10.5，M3-B3-B.0），重新执行完整的归属检查、预检查（可能因此得到 400 / 404，例如币种已关闭、交易已成为纯境内）与写入 batch；T、E、各 Entry id、O、A 全部重新生成。第一次尝试没有留下任何行，因此不会产生第二笔交易或第二个版本。
 5. **第二次**仍为经确认的来源变化 → 409 `CONCURRENT_CHANGE`；其他结果按上表处理。
 
 不使用进程内锁：同键并发、版本竞争与主数据竞争全部由数据库（门控 G、键表主键、条件写入、外键、触发器）串行判定。
@@ -870,7 +884,7 @@ S3–S5 中的 `EXISTS (Event E)` 必不可少：若 r+1 由更早的另一请�
 6. 失败的请求（4xx / 5xx）不保存键，重试时重新执行（数据库未写入任何内容）。
 7. 已提交但响应丢失：键行已与操作一同提交，同键重试经幂等查找重放首次结果，不会再次写入。
 
-**保留期**：新建键永久保留（随删除用户而级联删除，`key_create_no_delete` 防止其他删除）；更正、作废键保留 30 天，由 S0 在该用户自己的写入 batch 中清理（只删当前用户已过期的更正 / 作废键，随 batch 回滚）。过期后用同一键重试：更正因 `baseRevision` 过时（版本号单调递增）→ 409 `REVISION_CONFLICT`，作废因已是终态 → 409 `TRANSACTION_VOIDED`；**拒绝，不会重复写入**。
+**保留期**：新建键永久保留（随删除用户而级联删除，`key_create_no_delete` 防止其他删除）；更正、作废键保留 30 天，由 S0 在该用户自己的写入 batch 中清理（只删当前用户已过期的更正 / 作废键，随 batch 回滚）。过期后用同一键重试：更正因 `baseRevision` 过时（版本号单调递增）→ 409 `REVISION_CONFLICT`，作废因已是终态 → 409 `TRANSACTION_VOIDED`；**拒绝，不会重复写入**。M3-B3-B.0（Q-B3-2）：过期以 `expires_at <= now` 判定，是逻辑过期——查找时即视为不存在，不必等到 S0 实际删除（结果不取决于该用户此后是否写入过）；同一请求的查找、S0 与新键行的期限使用同一个 `now`；物理删除仍只由 S0 在写入 batch 中执行，门控 G 在 S0 之后判定。
 
 ### 10.11 删除保护与用户级联
 
