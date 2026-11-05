@@ -71,9 +71,9 @@ export async function seedUser(e: Engine, prefix = 'u') {
   const PP = (await created('/api/payment-channels', { name: `Wallet ${++seq}`, channelType: 'payment_service' })).id as string;
   const post = (body: Body, key: string | null = newKey(), headers: Record<string, string> = {}) =>
     api.req('POST', '/api/transactions', body, key === null ? headers : { 'idempotency-key': key, ...headers });
-  /** The same POST, but the response body as the exact bytes the server sent (no JSON parsing). */
-  const postBytes = async (body: Body, key: string) => {
-    const res = await e.t.app.request('/api/transactions', {
+  /** A POST with a key, the response body as the exact bytes the server sent (no JSON parsing). */
+  const bytesAt = async (path: string, body: Body, key: string) => {
+    const res = await e.t.app.request(path, {
       method: 'POST',
       headers: {
         origin: ORIGIN,
@@ -87,7 +87,24 @@ export async function seedUser(e: Engine, prefix = 'u') {
     const bytes = new Uint8Array(await res.arrayBuffer());
     return { status: res.status, res, bytes, text: new TextDecoder('utf-8', { fatal: true }).decode(bytes) };
   };
-  return { id: u.user.id, api, I, HK, BE, CN, US, K, PP, post, postBytes };
+  const postBytes = (body: Body, key: string) => bytesAt('/api/transactions', body, key);
+  /** POST /transactions/:id/void (M3-B3-B). */
+  const voidTx = (T: string, body: Body, key: string | null = newKey(), headers: Record<string, string> = {}) =>
+    api.req('POST', `/api/transactions/${T}/void`, body, key === null ? headers : { 'idempotency-key': key, ...headers });
+  const voidBytes = (T: string, body: Body, key: string) => bytesAt(`/api/transactions/${T}/void`, body, key);
+  /** POST /transactions/:id/revisions (M3-B3-C). */
+  const correct = (T: string, body: Body, key: string | null = newKey(), headers: Record<string, string> = {}) =>
+    api.req('POST', `/api/transactions/${T}/revisions`, body, key === null ? headers : { 'idempotency-key': key, ...headers });
+  const correctBytes = (T: string, body: Body, key: string) => bytesAt(`/api/transactions/${T}/revisions`, body, key);
+  /** PATCH /transactions/:id/notes (M3-B3-B). */
+  const notes = (T: string, body: unknown, headers: Record<string, string> = {}) => api.req('PATCH', `/api/transactions/${T}/notes`, body, headers);
+  /** Sign in again in the same cookie jar (sessions expire after 7 idle days; tests move the clock by weeks). */
+  const relogin = async () => {
+    const fresh = await login(e.t, u);
+    api.jar.clear();
+    for (const [k, v] of fresh.jar) api.jar.set(k, v);
+  };
+  return { id: u.user.id, api, I, HK, BE, CN, US, K, PP, post, postBytes, voidTx, voidBytes, correct, correctBytes, notes, relogin };
 }
 export type Seed = Awaited<ReturnType<typeof seedUser>>;
 
@@ -104,6 +121,12 @@ export const spend = (s: Seed, x: Body = {}): Body => ({
   entries: [{ direction: 'out', accountId: s.HK, currency: 'HKD', amountStatus: 'confirmed', amount: 7830 }],
   ...x,
 });
+
+/** A complete fact correction built from a create body (no type / notes / declaredHomeRegion; recordMode stated, M3-B3-C). */
+export const factOf = (create: Body, x: Body = {}): Body => {
+  const { type: _t, notes: _n, declaredHomeRegion: _d, ...rest } = create;
+  return { kind: 'fact_correction', baseRevision: 1, reason: 'facts were wrong', recordMode: 'current', ...rest, ...x };
+};
 
 /** HK → BE own transfer between two registered accounts (USD 1 000.00 out, USD 999.00 in). */
 export const ownTransfer = (s: Seed, x: Body = {}): Body => ({
@@ -187,9 +210,13 @@ export async function quietly<R>(fn: () => Promise<R>): Promise<R> {
 
 /**
  * Spy on db.batch: each entry of `hooks` wraps one call in order (before / after the real batch,
- * or instead of it); later calls run unchanged. Returns the spy (call count = write attempts).
+ * or instead of it, or on a transformed statement list); later calls run unchanged. Returns the spy
+ * (call count = write attempts).
  */
-export function batchHooks(e: Engine, hooks: { before?: () => Promise<unknown>; after?: (error: unknown) => Promise<unknown>; replace?: () => Promise<never> }[]) {
+export function batchHooks(
+  e: Engine,
+  hooks: { before?: () => Promise<unknown>; after?: (error: unknown) => Promise<unknown>; replace?: () => Promise<never>; transform?: (batch: readonly unknown[]) => readonly unknown[] }[],
+) {
   const db = e.t.db;
   const original = db.batch.bind(db);
   let call = 0;
@@ -199,7 +226,7 @@ export function batchHooks(e: Engine, hooks: { before?: () => Promise<unknown>; 
     if (h.replace) return h.replace();
     await h.before?.();
     try {
-      const r = await original(batch as never);
+      const r = await original((h.transform ? h.transform(batch as readonly unknown[]) : batch) as never);
       await h.after?.(undefined);
       return r;
     } catch (err) {
@@ -209,7 +236,7 @@ export function batchHooks(e: Engine, hooks: { before?: () => Promise<unknown>; 
   });
 }
 
-// ------------------------------------------------------------------ versions and voids through the M3-B1 chains (no route before M3-B3)
+// ------------------------------------------------------------------ versions through the M3-B1 chains (no correction route before M3-B3-C; voidTxn predates the void route)
 
 /** A new version r+1 through the M3-B1 fact-correction chain (facts changed, snapshots carried). */
 export async function factCorrection(e: Engine, s: Seed, T: string, changes: Partial<EventFactsIn>, entryChange?: { accountId: string; currency: string }) {

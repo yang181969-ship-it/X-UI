@@ -12,6 +12,7 @@ import {
   type TransactionEntryDto,
   type TransactionListDto,
   type TransactionListItem,
+  type TransactionRevisionDto,
 } from '@xui/ledger-shared';
 import { and, asc, desc, eq, gte, inArray, lte, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
@@ -254,4 +255,28 @@ export async function getTransaction(c: C, id: string): Promise<TransactionDto |
     ...item!,
     revisions: versions.map((v) => ({ revision: v.revision, revisionKind: v.revisionKind, correctionReason: v.correctionReason, createdAt: v.createdAt })),
   };
+}
+
+// ------------------------------------------------------------------ one version
+
+/**
+ * GET /transactions/:id/revisions/:revision (API_SPEC §5.6): one PUBLISHED version (≤ currentRevision)
+ * of the caller's transaction, any status (voided too) — its event and entries exactly as saved
+ * (snapshots included), each entry with the CURRENT account summary beside its saved jurisdiction.
+ * Another user's, a missing or unpublished transaction, and a version above currentRevision (an
+ * unpublished next version included) are the same null (404).
+ */
+export async function getRevision(c: C, id: string, revision: number): Promise<TransactionRevisionDto | null> {
+  const [header] = await c.db
+    .select()
+    .from(transactions)
+    .where(and(eq(transactions.id, id), eq(transactions.userId, c.userId), gte(transactions.currentRevision, 1)));
+  if (!header || revision > header.currentRevision) return null;
+  const [event] = await c.db
+    .select()
+    .from(transactionEvents)
+    .where(and(eq(transactionEvents.transactionId, header.id), eq(transactionEvents.userId, c.userId), eq(transactionEvents.revision, revision)));
+  if (!event) missing('published version');
+  const [item] = await assemble(c, [{ header, event: event! }]);
+  return { transactionId: header.id, txnType: header.txnType, revision: event!.revision, event: item!.event, entries: item!.entries };
 }

@@ -16,8 +16,8 @@ import type { AppBindings } from '../env.ts';
 import { fail, notFound } from '../lib/http.ts';
 import { newId } from '../lib/id.ts';
 import { classifyWriteFailure, LedgerWriteError } from './transactionErrors.ts';
-import { answerStoredKey, findKey, type RequestFingerprint, type WriteOutcome } from './transactionIdempotency.ts';
-import { byDirection, writeResult } from './transactionResult.ts';
+import { answerStoredKey, committedOutcome, liveKey, takenKeyOutcome, type RequestFingerprint, type WriteOutcome } from './transactionIdempotency.ts';
+import { byDirection } from './transactionResult.ts';
 import { createBatch, type CreateChainIn } from './transactionWrite.ts';
 
 /**
@@ -48,8 +48,8 @@ import { createBatch, type CreateChainIn } from './transactionWrite.ts';
 
 type C = Context<AppBindings>;
 
-/** What steps 1–3 read: the values each snapshot source had, for the post-batch comparison. */
-interface Sources {
+/** What steps 1–3 read: the values each snapshot source had, for the post-batch comparison (also used by corrections). */
+export interface Sources {
   /** account id → account_country (the caller's accounts named by the entries). */
   accountCountry: Map<string, string>;
   /** `${accountId}:${currency}` → status (the caller's account currencies named by the entries). */
@@ -60,9 +60,12 @@ interface Sources {
   preference: string;
 }
 
-const currencyKey = (accountId: string, currency: string) => `${accountId}:${currency}`;
+export const currencyKey = (accountId: string, currency: string) => `${accountId}:${currency}`;
 
-async function readSources(c: C, input: TransactionCreate): Promise<Sources> {
+/** The references of a request with entries, a card and a channel: a create or a fact correction. */
+export type ReferencesIn = Pick<TransactionCreate, 'entries' | 'cardId' | 'paymentChannelId'>;
+
+export async function readSources(c: C, input: ReferencesIn): Promise<Sources> {
   const { db } = c.var.deps;
   const u = c.var.user.id;
   const accountIds = [...new Set(input.entries.map((e) => e.accountId))];
@@ -90,17 +93,17 @@ async function readSources(c: C, input: TransactionCreate): Promise<Sources> {
 }
 
 /** Step 1: 404 for anything the caller can't see (same body for another user's and a missing id). */
-function assertOwned(input: TransactionCreate, entries: readonly EntryInput[], s: Sources) {
+export function assertOwned(input: ReferencesIn, entries: readonly EntryInput[], s: Sources) {
   for (const e of entries) if (!s.accountCountry.has(e.accountId)) notFound('account');
   if (input.cardId !== null && !s.cardFound) notFound('card');
   if (input.paymentChannelId !== null && !s.channelFound) notFound('payment channel');
 }
 
-const currencyProblem = (details: EntryCurrencyDetails): never =>
+export const currencyProblem = (details: EntryCurrencyDetails): never =>
   fail(400, 'the entry currency is not a registered currency of the account, or it is closed', 'CURRENCY_NOT_ON_ACCOUNT', details);
 
 /** Step 2a: every entry currency is registered on its account. */
-function assertRegistered(entries: readonly EntryInput[], s: Sources) {
+export function assertRegistered(entries: readonly EntryInput[], s: Sources) {
   for (const e of entries) if (!s.currencyStatus.has(currencyKey(e.accountId, e.currency))) currencyProblem({ direction: e.direction, currency: e.currency, status: null });
 }
 
@@ -170,8 +173,7 @@ async function explainMissing(c: C, input: TransactionCreate, cause: unknown): P
   throw new LedgerWriteError('the transaction write did not complete and re-reading does not explain why', { cause });
 }
 
-function chainInput(c: C, input: TransactionCreate, plan: Plan, key: string, request: RequestFingerprint): CreateChainIn {
-  const now = c.var.deps.now();
+function chainInput(c: C, input: TransactionCreate, plan: Plan, key: string, request: RequestFingerprint, now: number): CreateChainIn {
   const transfer = input.type === 'own_transfer' || input.type === 'third_party_transfer';
   const cp = input.counterparty;
   return {
@@ -221,38 +223,34 @@ function chainInput(c: C, input: TransactionCreate, plan: Plan, key: string, req
   };
 }
 
-/** Steps 1–4 for a request whose key is not stored yet (the route looked it up first). */
-export async function createTransaction(c: C, input: TransactionCreate, key: string, request: RequestFingerprint): Promise<WriteOutcome> {
+/**
+ * Steps 1–4 for a request whose key is not stored yet (the route looked it up first). `now` is the
+ * request's one server time (API_SPEC §5.0.3): every attempt, its S0 and its key row use it.
+ */
+export async function createTransaction(c: C, input: TransactionCreate, key: string, request: RequestFingerprint, now: number): Promise<WriteOutcome> {
   const { db } = c.var.deps;
   const u = c.var.user.id;
   for (let attempt = 1; ; attempt++) {
     const plan = await prepare(c, input);
-    const x = chainInput(c, input, plan, key, request);
+    const x = chainInput(c, input, plan, key, request, now);
     try {
       await db.batch(createBatch(db, x));
     } catch (err) {
       const failure = classifyWriteFailure(err);
-      if (failure.kind === 'key_taken') {
-        const stored = await findKey(db, u, key);
-        if (!stored) throw new LedgerWriteError('the key was refused as taken but is not stored', { cause: err });
-        return answerStoredKey(c.var.deps, stored, request);
-      }
+      if (failure.kind === 'key_taken') return takenKeyOutcome(c.var.deps, u, key, request, now, err);
       if (failure.kind === 'key_incomplete' || failure.kind === 'foreign_key') return explainMissing(c, input, err);
       if (failure.kind === 'ledger' && (failure.code === 'LEDGER_CLASSIFICATION' || failure.code === 'LEDGER_CLOSED_CURRENCY')) {
         if (!(await sourcesChanged(c, input, plan, failure.code))) throw new LedgerWriteError(`${failure.code} without a changed source`, { cause: err });
         if (attempt >= 2) fail(409, 'the account jurisdiction, home region or currency status changed while saving — try again', 'CONCURRENT_CHANGE');
         // The batch was rolled back (a RAISE aborts it). A request with the same key may have
         // committed meanwhile: then that result answers this request, nothing is written again.
-        const stored = await findKey(db, u, key);
-        if (stored) return answerStoredKey(c.var.deps, stored, request);
+        const stored = await liveKey(db, u, key, now);
+        if (stored) return answerStoredKey(c.var.deps, stored, request, now);
         continue;
       }
       throw new LedgerWriteError('the transaction write failed', { cause: err });
     }
-    const row = await findKey(db, u, key);
-    if (!row) throw new LedgerWriteError('the write batch committed without its key row');
-    if (row.opId === x.O) return { status: 201, result: await writeResult(db, row), replayed: false };
-    // Gate G was closed: another request with this key committed first.
-    return answerStoredKey(c.var.deps, row, request);
+    // Committed: this request's key row, or (gate G was closed) the one another request stored first.
+    return committedOutcome(c.var.deps, u, key, x.O, request, now);
   }
 }

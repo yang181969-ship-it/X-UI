@@ -381,6 +381,11 @@ describe('transaction request schemas (API_SPEC §5.4 – §5.10)', () => {
     bad(transactionCorrectionSchema, { ...fact, declaredHomeRegion: 'HK' });
     bad(factCorrectionSchema, { ...fact, reason: undefined });
     bad(factCorrectionSchema, { ...fact, reason: '   ' });
+    // Q-B3-5: a fact correction states its recordMode (no create default); a create still defaults to current.
+    bad(factCorrectionSchema, { ...fact, recordMode: undefined });
+    bad(transactionCorrectionSchema, { ...fact, recordMode: undefined });
+    expect(ok(factCorrectionSchema, { ...fact, recordMode: 'backfill' }).recordMode).toBe('backfill');
+    expect(ok(transactionCreateSchema, { ...SPEND, recordMode: undefined }).recordMode).toBe('current');
     ok(transactionCorrectionSchema, { kind: 'settlement', baseRevision: 1, reason: null, entries: [{ direction: 'in', amount: 783000 }] });
     bad(transactionCorrectionSchema, { kind: 'settlement', baseRevision: 1, entries: [] });
     bad(transactionCorrectionSchema, { kind: 'settlement', baseRevision: 1, entries: [{ direction: 'in', amount: 1 }, { direction: 'in', amount: 2 }] });

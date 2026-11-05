@@ -126,13 +126,18 @@ export const settlementCorrectionSchema = z
   })
   .superRefine((v, ctx) => uniqueDirections(v.entries, ctx));
 
-/** fact_correction: the complete corrected facts (no type, declaredHomeRegion or notes); reason required. */
+/**
+ * fact_correction: the complete corrected facts (no type, declaredHomeRegion or notes); reason
+ * required. recordMode is required too (M3-B3-B.0, Q-B3-5): a correction that left it out would
+ * otherwise turn a backfill into a current transaction through the create default.
+ */
 export const factCorrectionSchema = z
   .strictObject({
     kind: z.literal('fact_correction'),
     baseRevision: revisionSchema,
     reason: reasonSchema,
     ...factsShape,
+    recordMode: z.enum(RECORD_MODES),
   })
   .superRefine(checkFacts);
 
