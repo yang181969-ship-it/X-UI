@@ -1,5 +1,5 @@
 import { Alert, App, Button, Input, Modal, Typography } from 'antd';
-import type { CardDto, CardStatus } from '@xui/ledger-shared';
+import type { CardDto, CardStatus, TransactionReferencesDetails } from '@xui/ledger-shared';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useRefreshAccounts } from '../../api/accounts.ts';
@@ -53,6 +53,13 @@ export function useCardActions() {
         setDeleting(null);
         void setStatus(card, 'closed');
       }}
+      onInUse={(card, transactions) => {
+        setDeleting(null);
+        // Used by transactions (any version, voided ones too — API_SPEC §5.12): it can only be deactivated.
+        const title = t('cards.inUseTitle', { name: card.name });
+        if (card.status === 'closed') modal.info({ title, content: t('cards.inUseClosed', { count: transactions }), className: 'card-in-use' });
+        else modal.confirm({ title, content: t('cards.inUseContent', { count: transactions }), okText: t('cards.close'), className: 'card-in-use', onOk: () => setStatus(card, 'closed') });
+      }}
     />
   );
 
@@ -66,7 +73,19 @@ export function useCardActions() {
   };
 }
 
-function CardDeleteDialog({ target, onClose, onDeleted, onDeactivate }: { target: Target | null; onClose: () => void; onDeleted: () => Promise<void>; onDeactivate: (card: Target) => void }) {
+function CardDeleteDialog({
+  target,
+  onClose,
+  onDeleted,
+  onDeactivate,
+  onInUse,
+}: {
+  target: Target | null;
+  onClose: () => void;
+  onDeleted: () => Promise<void>;
+  onDeactivate: (card: Target) => void;
+  onInUse: (card: Target, transactions: number) => void;
+}) {
   const { t } = useTranslation();
   const { message } = App.useApp();
   // The detail lists every link (ended ones too) and counts every channel-source record: exactly what the delete removes with the card.
@@ -93,6 +112,10 @@ function CardDeleteDialog({ target, onClose, onDeleted, onDeactivate }: { target
       void message.success(t('common.deleted'));
       await onDeleted();
     } catch (e) {
+      if (e instanceof ApiError && e.code === 'IN_USE') {
+        onInUse(target, (e.details as TransactionReferencesDetails | undefined)?.references.transactions ?? 0);
+        return;
+      }
       // Already gone (deleted elsewhere): nothing left to do.
       if (e instanceof ApiError && e.status === 404) await onDeleted();
       void message.error(errorText(e, t));

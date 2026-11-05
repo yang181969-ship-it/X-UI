@@ -16,6 +16,9 @@ const LoginPage = lazy(() => import('./pages/LoginPage.tsx').then((m) => ({ defa
 const SetupPage = lazy(() => import('./pages/SetupPage.tsx').then((m) => ({ default: m.SetupPage })));
 const OverviewPage = lazy(() => import('./pages/OverviewPage.tsx').then((m) => ({ default: m.OverviewPage })));
 const TransactionsPage = lazy(() => import('./pages/TransactionsPage.tsx').then((m) => ({ default: m.TransactionsPage })));
+const TransactionFormPage = lazy(() => import('./pages/TransactionFormPage.tsx').then((m) => ({ default: m.TransactionFormPage })));
+const FactCorrectionPage = lazy(() => import('./pages/TransactionFormPage.tsx').then((m) => ({ default: m.FactCorrectionPage })));
+const TransactionDetailPage = lazy(() => import('./pages/TransactionDetailPage.tsx').then((m) => ({ default: m.TransactionDetailPage })));
 const AccountsPage = lazy(() => import('./pages/AccountsPage.tsx').then((m) => ({ default: m.AccountsPage })));
 const AccountDetailPage = lazy(() => import('./pages/AccountDetailPage.tsx').then((m) => ({ default: m.AccountDetailPage })));
 const ChannelDetailPage = lazy(() => import('./pages/ChannelDetailPage.tsx').then((m) => ({ default: m.ChannelDetailPage })));
@@ -43,6 +46,10 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <OverviewPage /> },
       { path: 'transactions', element: <TransactionsPage /> },
+      { path: 'transactions/new', element: <TransactionFormPage /> },
+      { path: 'transactions/:id', element: <TransactionDetailPage /> },
+      { path: 'transactions/:id/revisions/:revision', element: <TransactionDetailPage /> },
+      { path: 'transactions/:id/correct', element: <FactCorrectionPage /> },
       { path: 'accounts', element: <AccountsPage /> },
       { path: 'accounts/channels/:id', element: <ChannelDetailPage /> },
       { path: 'accounts/:id', element: <AccountDetailPage /> },

@@ -243,7 +243,7 @@ test('a currency used by a card link can only be closed; the link stays visible'
   await page.getByRole('button', { name: '管理币种' }).click();
   await currencyRow('EUR').getByRole('button', { name: '移除 EUR' }).click();
   await save();
-  await expect(modal().locator('.ant-alert')).toContainText('EUR 仍被银行卡关联引用，不能移除');
+  await expect(modal().locator('.ant-alert')).toContainText('EUR 仍被银行卡关联或流水引用，不能移除');
   await shot(page, '14-currency-in-use');
   await modal().getByRole('button', { name: btn('取消') }).click();
   await page.getByRole('button', { name: '管理币种' }).click();

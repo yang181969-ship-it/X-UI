@@ -1,10 +1,10 @@
 import { App, Typography } from 'antd';
 import { useQueryClient } from '@tanstack/react-query';
-import type { ChannelStatus, PaymentChannelDetail, PaymentChannelDto } from '@xui/ledger-shared';
+import type { ChannelStatus, PaymentChannelDetail, PaymentChannelDto, TransactionReferencesDetails } from '@xui/ledger-shared';
 import { useTranslation } from 'react-i18next';
 import { useRefreshAccounts } from '../../api/accounts.ts';
 import { CHANNELS, deleteChannel, updateChannel } from '../../api/channels.ts';
-import { get } from '../../api/client.ts';
+import { ApiError, get } from '../../api/client.ts';
 import { errorText } from '../../api/hooks.ts';
 
 /** Archive / restore / delete a payment channel, shared by the list and the detail page. */
@@ -56,7 +56,13 @@ export function useChannelActions() {
           onDeleted?.();
           void message.success(t('common.deleted'));
         } catch (e) {
-          void message.error(errorText(e, t));
+          if (e instanceof ApiError && e.code === 'IN_USE') {
+            // Used by transactions (any version, voided ones too — API_SPEC §5.12): it can only be archived.
+            const count = (e.details as TransactionReferencesDetails | undefined)?.references.transactions ?? 0;
+            const title = t('channels.inUseTitle', { name: ch.name });
+            if (ch.status === 'archived') modal.info({ title, content: t('channels.inUseArchived', { count }), className: 'channel-in-use' });
+            else modal.confirm({ title, content: t('channels.inUseContent', { count }), okText: t('channels.archive'), className: 'channel-in-use', onOk: () => setStatus(ch, 'archived') });
+          } else void message.error(errorText(e, t));
         } finally {
           await refresh();
         }

@@ -32,7 +32,7 @@ export function SpendingSourcePreview({ card }: { card: CardDetail }) {
       </label>
       {isLoading && <Skeleton active paragraph={{ rows: 2 }} />}
       {isError && <Alert type="error" showIcon title={errorText(error, t)} />}
-      {result && <Result result={result} />}
+      {result && <SpendingSourceExplain result={result} />}
       <Typography.Paragraph type="secondary" className="field-note">
         {t('links.preview.rule')}
       </Typography.Paragraph>
@@ -40,7 +40,8 @@ export function SpendingSourcePreview({ card }: { card: CardDetail }) {
   );
 }
 
-function Result({ result: r }: { result: SpendingSourceResult }) {
+/** The result and the links it considered (also shown in the transaction form, M3-B4-C). */
+export function SpendingSourceExplain({ result: r }: { result: SpendingSourceResult }) {
   const { t } = useTranslation();
   const chosen = r.match === 'no_match' ? undefined : r.considered.find((c) => c.linkId === r.linkId);
   const name = chosen?.account.name ?? '';

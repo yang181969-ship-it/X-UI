@@ -19,7 +19,8 @@ export function PanelLayout() {
       <Layout>
         <Layout.Content>
           <motion.div
-            key={location.pathname}
+            // A transaction and its revision drawer are one page: opening a version doesn't replay the page transition.
+            key={location.pathname.replace(/\/revisions\/[^/]*$/, '')}
             className="content-area"
             initial={reduce ? false : { opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}

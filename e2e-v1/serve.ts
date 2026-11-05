@@ -1,7 +1,7 @@
 /**
  * Starts the X-UI v1 production build (apps/ledger-web/dist served by apps/ledger-api) against a
  * throwaway database in data/e2e-v1/, so browser runs never touch data/x-ui-v1.db or the legacy
- * app. Seeds seven users and a few fictional rows (the accounts, settings, cards, card-links and channels journeys have their own users).
+ * app. Seeds eleven users and a few fictional rows (the accounts, settings, cards, card-links, channels, transactions, transaction-form, lifecycle and recovery journeys have their own users).
  */
 import { mkdirSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -23,6 +23,14 @@ import {
   CHANNELS_SEED,
   CHANNELS_TOTP_SECRET,
   CHANNELS_USER,
+  CREATE_SEED,
+  CREATE_TOTP_SECRET,
+  CREATE_USER,
+  LEDGER_SEED,
+  LIFE_TOTP_SECRET,
+  LIFE_USER,
+  RECOVER_TOTP_SECRET,
+  RECOVER_USER,
   E2E_V1_PORT,
   LINKS_SEED,
   LINKS_TOTP_SECRET,
@@ -34,6 +42,9 @@ import {
   SEED,
   SETTINGS_TOTP_SECRET,
   SETTINGS_USER,
+  TXN_SEED,
+  TXN_TOTP_SECRET,
+  TXN_USER,
 } from './fixtures.ts';
 
 const dir = resolve(REPO_ROOT, 'data/e2e-v1');
@@ -207,6 +218,77 @@ await db.insert(cards).values([
 await db.insert(paymentChannels).values({ id: newId(now), userId: chUser.id, name: CHANNELS_SEED.oldChannel, nameKey: CHANNELS_SEED.oldChannel, channelType: 'payment_service', balanceAccountId: chTaken, sort: 9, createdAt: now, updatedAt: now });
 // Another user's channel (fixed id): the journey tries to open it.
 await db.insert(paymentChannels).values({ id: CHANNELS_SEED.otherUsersChannelId, userId: other.id, name: CHANNELS_SEED.otherUsersChannel, nameKey: CHANNELS_SEED.otherUsersChannel.toLowerCase(), channelType: 'device_wallet', createdAt: now, updatedAt: now });
+
+// The transactions journey's own user and rows (fictional); its transactions are created through the API by the journey.
+const txUser = await activate(TXN_USER, TXN_TOTP_SECRET);
+const [txBank, txEmi, txHk, txUsd, txCn] = [newId(now), newId(now), newId(now), newId(now), newId(now)];
+await db.insert(institutions).values([
+  { id: txBank, userId: txUser.id, name: TXN_SEED.bank, nameKey: TXN_SEED.bank, country: 'HK', institutionType: 'bank', createdAt: now, updatedAt: now },
+  { id: txEmi, userId: txUser.id, name: TXN_SEED.emi, nameKey: TXN_SEED.emi, country: 'US', institutionType: 'emi', createdAt: now, updatedAt: now },
+]);
+await db.insert(accounts).values([
+  { id: txHk, userId: txUser.id, institutionId: txBank, name: TXN_SEED.hkAccount, nameKey: TXN_SEED.hkAccount, accountType: 'bank', accountCountry: 'HK', sort: 1, createdAt: now, updatedAt: now },
+  { id: txUsd, userId: txUser.id, institutionId: txEmi, name: TXN_SEED.usdAccount, nameKey: TXN_SEED.usdAccount, accountType: 'e_money', accountCountry: 'US', sort: 2, createdAt: now, updatedAt: now },
+  { id: txCn, userId: txUser.id, institutionId: txBank, name: TXN_SEED.cnAccount, nameKey: TXN_SEED.cnAccount, accountType: 'bank', accountCountry: 'CN', sort: 3, createdAt: now, updatedAt: now },
+]);
+await db.insert(accountCurrencies).values([
+  { accountId: txHk, userId: txUser.id, currency: 'HKD', isDefault: true, sort: 0, createdAt: now },
+  { accountId: txHk, userId: txUser.id, currency: 'EUR', sort: 1, createdAt: now },
+  { accountId: txUsd, userId: txUser.id, currency: 'USD', isDefault: true, sort: 0, createdAt: now },
+  { accountId: txCn, userId: txUser.id, currency: 'CNY', isDefault: true, sort: 0, createdAt: now },
+]);
+await db.insert(cards).values({ id: newId(now), userId: txUser.id, issuerInstitutionId: txBank, name: TXN_SEED.card, network: 'visa', cardType: 'debit', last4: TXN_SEED.cardLast4, issuingCountry: 'HK', sort: 1, createdAt: now, updatedAt: now });
+await db.insert(paymentChannels).values({ id: newId(now), userId: txUser.id, name: TXN_SEED.channel, nameKey: TXN_SEED.channel, channelType: 'device_wallet', sort: 1, createdAt: now, updatedAt: now });
+
+// The create-form journey's own user and rows (fictional); its transactions are entered through the form.
+const crUser = await activate(CREATE_USER, CREATE_TOTP_SECRET);
+const [crBank, crEmi, crHk, crUs, crCn, crLinked, crPlain] = [newId(now), newId(now), newId(now), newId(now), newId(now), newId(now), newId(now)];
+await db.insert(institutions).values([
+  { id: crBank, userId: crUser.id, name: CREATE_SEED.bank, nameKey: CREATE_SEED.bank, country: 'HK', institutionType: 'bank', createdAt: now, updatedAt: now },
+  { id: crEmi, userId: crUser.id, name: CREATE_SEED.emi, nameKey: CREATE_SEED.emi, country: 'US', institutionType: 'emi', createdAt: now, updatedAt: now },
+]);
+await db.insert(accounts).values([
+  { id: crHk, userId: crUser.id, institutionId: crBank, name: CREATE_SEED.hk, nameKey: CREATE_SEED.hk, accountType: 'bank', accountCountry: 'HK', sort: 1, createdAt: now, updatedAt: now },
+  { id: crUs, userId: crUser.id, institutionId: crEmi, name: CREATE_SEED.us, nameKey: CREATE_SEED.us, accountType: 'e_money', accountCountry: 'US', sort: 2, createdAt: now, updatedAt: now },
+  { id: crCn, userId: crUser.id, institutionId: crBank, name: CREATE_SEED.cn, nameKey: CREATE_SEED.cn, accountType: 'bank', accountCountry: 'CN', sort: 3, createdAt: now, updatedAt: now },
+]);
+await db.insert(accountCurrencies).values([
+  { accountId: crHk, userId: crUser.id, currency: 'HKD', isDefault: true, sort: 0, createdAt: now },
+  { accountId: crHk, userId: crUser.id, currency: 'USD', sort: 1, createdAt: now },
+  { accountId: crHk, userId: crUser.id, currency: 'EUR', status: 'closed', sort: 2, createdAt: now },
+  { accountId: crUs, userId: crUser.id, currency: 'USD', isDefault: true, sort: 0, createdAt: now },
+  { accountId: crCn, userId: crUser.id, currency: 'CNY', isDefault: true, sort: 0, createdAt: now },
+]);
+await db.insert(cards).values([
+  { id: crLinked, userId: crUser.id, issuerInstitutionId: crBank, name: CREATE_SEED.linkedCard, network: 'visa', cardType: 'debit', last4: CREATE_SEED.linkedLast4, issuingCountry: 'HK', sort: 1, createdAt: now, updatedAt: now },
+  { id: crPlain, userId: crUser.id, issuerInstitutionId: crBank, name: CREATE_SEED.plainCard, network: 'mastercard', cardType: 'debit', last4: CREATE_SEED.plainLast4, issuingCountry: 'HK', sort: 2, createdAt: now, updatedAt: now },
+]);
+await db.insert(accountCardLinks).values({ id: newId(now), userId: crUser.id, cardId: crLinked, accountId: crHk, role: 'spending_source', isDefault: true, createdAt: now, updatedAt: now });
+
+// The lifecycle and recovery journeys' users: the same fictional accounts each; transactions come through the API.
+for (const [user, secret] of [
+  [LIFE_USER, LIFE_TOTP_SECRET],
+  [RECOVER_USER, RECOVER_TOTP_SECRET],
+] as const) {
+  const u = await activate(user, secret);
+  const [bank, emi, hk, us, cn] = [newId(now), newId(now), newId(now), newId(now), newId(now)];
+  await db.insert(institutions).values([
+    { id: bank, userId: u.id, name: LEDGER_SEED.bank, nameKey: LEDGER_SEED.bank, country: 'HK', institutionType: 'bank', createdAt: now, updatedAt: now },
+    { id: emi, userId: u.id, name: LEDGER_SEED.emi, nameKey: LEDGER_SEED.emi, country: 'US', institutionType: 'emi', createdAt: now, updatedAt: now },
+  ]);
+  await db.insert(accounts).values([
+    { id: hk, userId: u.id, institutionId: bank, name: LEDGER_SEED.hk, nameKey: LEDGER_SEED.hk, accountType: 'bank', accountCountry: 'HK', sort: 1, createdAt: now, updatedAt: now },
+    { id: us, userId: u.id, institutionId: emi, name: LEDGER_SEED.us, nameKey: LEDGER_SEED.us, accountType: 'e_money', accountCountry: 'US', sort: 2, createdAt: now, updatedAt: now },
+    { id: cn, userId: u.id, institutionId: bank, name: LEDGER_SEED.cn, nameKey: LEDGER_SEED.cn, accountType: 'bank', accountCountry: 'CN', sort: 3, createdAt: now, updatedAt: now },
+  ]);
+  await db.insert(accountCurrencies).values([
+    { accountId: hk, userId: u.id, currency: 'HKD', isDefault: true, sort: 0, createdAt: now },
+    { accountId: hk, userId: u.id, currency: 'USD', sort: 1, createdAt: now },
+    { accountId: hk, userId: u.id, currency: 'EUR', status: 'closed', sort: 2, createdAt: now },
+    { accountId: us, userId: u.id, currency: 'USD', isDefault: true, sort: 0, createdAt: now },
+    { accountId: cn, userId: u.id, currency: 'CNY', isDefault: true, sort: 0, createdAt: now },
+  ]);
+}
 client.close();
 
 await main();

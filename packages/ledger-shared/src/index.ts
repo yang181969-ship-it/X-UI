@@ -1,6 +1,7 @@
 export * from './classify.ts';
 export * from './enums.ts';
 export * from './expiry.ts';
+export * from './hints.ts';
 export * from './idempotency.ts';
 export * from './iso.ts';
 export * from './money.ts';

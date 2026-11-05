@@ -19,6 +19,7 @@ import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate } from 'react-router';
 import { post } from '../api/client.ts';
 import { setLanguage } from '../i18n/index.ts';
+import { browserSessionStorage, clearAllPendingWrites } from '../lib/pendingWrite.ts';
 import { useTheme } from '../theme/ThemeProvider.tsx';
 
 const PIN_KEY = 'xui-v1-sidebar-pinned';
@@ -64,9 +65,13 @@ export function AppSidebar() {
     setDrawer(false);
     if (key === 'logout') {
       await post('/auth/logout').catch(() => {});
+      // Unknown-outcome financial writes kept for a retry go with the query cache (B4-A Q1).
+      clearAllPendingWrites(browserSessionStorage());
       qc.clear();
       qc.setQueryData(['me'], null);
       navigate('/login');
+      // Again once the pages are gone: a form unmounting with a request in flight may have stored it.
+      setTimeout(() => clearAllPendingWrites(browserSessionStorage()), 0);
       return;
     }
     navigate(key);

@@ -1802,3 +1802,293 @@ html[data-theme='light'] .login-blob {
   display: block;
   margin-bottom: 4px;
 }
+
+/* ---------------------------------------------------------------- transactions (M3-B4-B) */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.money {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.money-currency {
+  font-size: 12px;
+  opacity: 0.7;
+}
+.money.is-pending .money-value {
+  color: #d46b08;
+}
+.amount-input {
+  max-width: 220px;
+}
+.txn-filter-row .ant-segmented {
+  margin-left: 0;
+}
+.txn-filter-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.txn-filter-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.txn-filter-field > * {
+  width: 100%;
+}
+.txn-table .clickable-row {
+  cursor: pointer;
+}
+.txn-table tr.is-voided td,
+.txn-card.is-voided {
+  opacity: 0.6;
+}
+.txn-table tr.is-voided .txn-entries,
+.txn-card.is-voided .txn-entries {
+  text-decoration: line-through;
+}
+.txn-entries {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.txn-entry {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.txn-entry-account {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.txn-direction {
+  font-size: 12px;
+  white-space: nowrap;
+}
+.txn-direction.is-out {
+  color: var(--expense);
+}
+.txn-direction.is-in {
+  color: var(--income);
+}
+.txn-tags .ant-tag {
+  margin-inline-end: 4px;
+}
+.txn-list-foot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+.txn-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.txn-cards.is-stale {
+  opacity: 0.6;
+}
+.txn-card {
+  border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  cursor: pointer;
+  min-width: 0;
+}
+.txn-card-head,
+.txn-card-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.txn-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.txn-head-main {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.txn-head-amount {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-size: 18px;
+}
+.txn-head-amount .muted {
+  font-size: 12px;
+}
+.txn-head-meta {
+  margin-top: 12px;
+}
+.txn-detail.is-voided .txn-head-title {
+  text-decoration: line-through;
+}
+.txn-section-title {
+  margin-top: 16px !important;
+}
+.txn-counterparty {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  align-items: center;
+}
+.txn-revision-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.txn-revision-reason {
+  margin-top: 2px;
+}
+.txn-revision-view {
+  padding-inline: 0;
+}
+.txn-notes-actions {
+  margin-top: 12px;
+}
+@media (max-width: 768px) {
+  .txn-head-amount {
+    align-items: flex-start;
+  }
+  .txn-card-foot {
+    align-items: flex-start;
+  }
+}
+
+/* ---------------------------------------------------------------- transaction form (M3-B4-C) */
+
+.txn-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.txn-form .ant-form-item {
+  margin-bottom: 16px;
+}
+.txn-type-switch {
+  max-width: 720px;
+}
+.txn-entry-editor {
+  border-top: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+  padding-top: 16px;
+  margin-top: 4px;
+}
+.txn-recommendation {
+  margin-bottom: 16px;
+}
+.txn-hints ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.txn-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.txn-unknown .ant-typography {
+  margin-bottom: 8px;
+}
+@media (max-width: 768px) {
+  /* Four types on a phone: a 2 × 2 grid, every label in full (M3-B4-D). */
+  .txn-type-switch .ant-segmented-group {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px;
+  }
+  .txn-type-switch .ant-segmented-item-label {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    line-height: 1.3;
+    padding-block: 6px;
+    min-height: 0;
+  }
+  .txn-type-switch .ant-segmented-thumb {
+    display: none;
+  }
+  .txn-form-actions .ant-btn {
+    flex: 1;
+  }
+}
+
+/* ---------------------------------------------------------------- lifecycle (M3-B4-D) */
+
+.txn-actions {
+  margin-top: 12px;
+}
+.txn-lifecycle-form .ant-form-item {
+  margin-bottom: 14px;
+}
+.txn-settle-entry {
+  border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+.txn-settle-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin-bottom: 8px;
+}
+.txn-lifecycle-actions {
+  display: flex;
+  justify-content: flex-end;
+  width: 100%;
+}
+.txn-void-facts {
+  padding-left: 18px;
+  margin-bottom: 12px;
+}
+.txn-conflict-changes {
+  margin: 8px 0;
+  padding-left: 18px;
+  word-break: break-word;
+}
+.txn-conflict-actions {
+  margin-top: 8px;
+}
+.txn-snapshot-confirm .ant-descriptions {
+  margin-bottom: 12px;
+}
+@media (max-width: 768px) {
+  .txn-lifecycle-actions .ant-btn {
+    flex: 1;
+  }
+  .txn-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+  .txn-actions .ant-btn {
+    width: 100%;
+  }
+}

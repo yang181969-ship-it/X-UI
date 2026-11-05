@@ -121,6 +121,71 @@ export const CHANNELS_SEED = {
   otherUsersChannelId: 'e2e-other-user-channel',
 };
 
+/**
+ * The transactions journey's own user (M3-B4-B): the home region stays the default CN (no settings
+ * row). Accounts, a card and a channel are seeded as rows; the transactions themselves are created
+ * through the real API (POST /api/transactions with an Idempotency-Key) by the journey — the create
+ * form arrives in B4-C. All names, numbers and amounts are fictional.
+ */
+export const TXN_USER = { username: 'transactions', password: 'e2e v1 transactions password', displayName: '流水测试用户' };
+export const TXN_TOTP_SECRET = 'KRUGS4ZANFZSAYJAORSXG5BAONSWG4TF';
+export const TXN_SEED = {
+  bank: '示例流水银行',
+  emi: '示例流水支付机构',
+  /** bank, HK: HKD (default) / EUR. */
+  hkAccount: '示例港币账户',
+  /** e_money, US: USD. */
+  usdAccount: '示例美元钱包',
+  /** bank, CN (= the home region): CNY. */
+  cnAccount: '示例境内账户',
+  card: '示例流水借记卡',
+  cardLast4: '5566',
+  /** device wallet without sources. */
+  channel: '示例流水钱包',
+};
+
+/**
+ * The create-form journey's own user (M3-B4-C): home region stays the default CN. One card has an
+ * active all-currency spending-source link to the HK account (USD → exact match, JPY → conversion);
+ * the other card has no link (no match). All names, numbers and amounts are fictional.
+ */
+export const CREATE_USER = { username: 'creator', password: 'e2e v1 creator password', displayName: '录入测试用户' };
+export const CREATE_TOTP_SECRET = 'MNZGKYLUNFXW4ZDBORQXGZLDOJSXIMZT';
+export const CREATE_SEED = {
+  bank: '示例录入银行',
+  emi: '示例录入支付机构',
+  /** bank, HK: HKD (default) / USD active, EUR closed. */
+  hk: '示例录入港币账户',
+  /** e_money, US: USD. */
+  us: '示例录入美元钱包',
+  /** bank, CN (= the home region): CNY. */
+  cn: '示例录入境内账户',
+  /** Linked to `hk` (spending source, all currencies, default). */
+  linkedCard: '示例推荐借记卡',
+  linkedLast4: '7788',
+  /** No links. */
+  plainCard: '示例无关联借记卡',
+  plainLast4: '9900',
+};
+
+/**
+ * The lifecycle journeys' users (M3-B4-D): one for settlement / corrections / void / conflicts, one
+ * for lost responses, recovery and the phone layout. Same fictional accounts each: an HK bank account
+ * (HKD default, USD, EUR closed), a US wallet (USD) and a home-region (CN) account (CNY). Their
+ * transactions are created through the API by the journeys.
+ */
+export const LIFE_USER = { username: 'lifecycle', password: 'e2e v1 lifecycle password', displayName: '生命周期测试用户' };
+export const LIFE_TOTP_SECRET = 'NRUWMZLDPFRWYZJAORSXG5DFOJXGK4TB';
+export const RECOVER_USER = { username: 'recovery', password: 'e2e v1 recovery password', displayName: '恢复测试用户' };
+export const RECOVER_TOTP_SECRET = 'OJSWG33WMVZHSIDUMVZXI2LOM5SXEYLC';
+export const LEDGER_SEED = {
+  bank: '示例生命周期银行',
+  emi: '示例生命周期支付机构',
+  hk: '示例更正港币账户',
+  us: '示例更正美元钱包',
+  cn: '示例更正境内账户',
+};
+
 export function totp(secret: string, at = Date.now()): string {
   return new TOTP({ secret: Secret.fromBase32(secret), digits: 6, period: 30, algorithm: 'SHA1' }).generate({ timestamp: at });
 }

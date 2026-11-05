@@ -9,8 +9,9 @@ import { CurrencyListEditor, currencyListProblem, toInput, type CurrencyItem } f
 
 /**
  * Replace an account's currency list (PUT /accounts/:id/currencies). A currency still used by a
- * card link can't be removed — the server answers 409 CURRENCY_IN_USE and the dialog explains
- * that closing it keeps the link and its history.
+ * card link or by a transaction entry (any version, API_SPEC §5.12) can't be removed — the server
+ * answers 409 CURRENCY_IN_USE and the dialog explains that closing it keeps links, transactions
+ * and history.
  */
 export function CurrencyModal({ account, open, onClose }: { account: AccountDto; open: boolean; onClose: () => void }) {
   const { t } = useTranslation();
